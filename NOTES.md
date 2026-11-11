@@ -72,3 +72,27 @@ Chênh lệch theo case (chỉ liệt kê case có đổi điểm): H1 60→100,
 - **Điểm cao không bằng nội dung đúng.** H6 đạt 95 dù chép sai ID incident và kết luận sai. Kiểm tra bằng code chỉ đếm số step, còn judge cùng model với agent không phát hiện lỗi này.
 - **Prompt không bảo đảm hành vi.** Quy tắc "thử lại khi `INCIDENT_NOT_FOUND`" không được model tuân thủ. Muốn chắc chắn cần cơ chế trong code (ví dụ gợi ý lại ID đúng từ URL đã quan sát), chưa làm trong bài này.
 - **Kiểm tra nguồn chỉ kiểm tra sự hiện diện của một URL**, không chứng minh mọi nhận định đều có nguồn.
+
+## 6. Bonus: 5 nhà cung cấp, retry, phân trang, context
+
+**Kết quả** (`eval_bonus.json`, 10/10 case được chấm): **99,4/100**, `bonus_points_0_15` = **14,91**. Cùng cấu hình với bài chính: `gpt-4.1-mini` cho agent và judge, `max_steps` = 16, dataset `bonus`. Chỉ B10 dưới 100 (94). Agent dùng khoảng 54 nghìn token (B6 chiếm 19 nghìn vì 160 mục nhiễu), chưa tính judge.
+
+**Baseline trước khi sửa** (`agent.py` của bài chính, chưa sửa gì): 9/10 case được chấm, trung bình 83,0.
+- **B5 chưa chấm**: provider báo `TimeoutError: The read operation timed out` ở step 3, không phải lỗi agent; chạy lại case này là có điểm.
+- **B3 = 50, B10 = 50**: gặp 429 nhưng model không thử lại (B3 còn hỏi ngược người dùng "Bạn có muốn tôi thử lại?"); code chấm trần 50 vì cần ít nhất 2 lần gọi `get_vercel_status`.
+- **B6 = 50**: chỉ gọi hai tool `get_*_status`, không gọi `get_incident_details` nên bị trần 50.
+
+**Thay đổi trong `agent.py`:**
+- **Retry 429 có ngân sách.** Model vẫn thấy observation 429 (test có sẵn `bonus/test_agent.py` yêu cầu điều này). Code thêm `attempts` và `retries_remaining` vào kết quả, chờ theo `Retry-After` (tối đa 5 giây; lớn hơn thì dừng, không chờ), và đếm 429 theo (tool, provider) trong cả run. Sau 3 lần thì không gọi tool nữa mà trả `retry_exhausted: true` (event `retry_budget_exhausted` trong trace), nên không vượt giới hạn "tối đa 3 lần".
+- **Cổng nhắc thử lại.** Nếu model định kết thúc khi còn lượt thử lại, ghi event `validation_pending_retry` và nhắc model gọi lại, cùng kiểu với cổng kiểm tra nguồn.
+- **`BONUS_RULES`.** Quy tắc nối thêm vào prompt chỉ khi bộ tools có `system_prompt` riêng, nên bài chính không bị ảnh hưởng: phải gọi `get_incident_details` khi cần chi tiết; đọc tiếp theo `next_offset`; gọi lại ngay khi `retries_remaining > 0`; thiếu tool cho provider thì nói thiếu dữ liệu.
+- **Tests offline:** `tests/test_retry.py` (5 test); tổng 42 test chính và 3 test bonus đều pass.
+
+**Hành vi quan sát được trong trace:** B3 gọi Vercel hai lần (429 rồi thành công); B4 gọi Vercel đúng 3 lần rồi dừng và báo không biết trạng thái; B10 gặp 429 ở Vercel, thử lại thành công; B5 sửa tham số sau `INVALID_ARGUMENTS`; B2 đọc nhiều trang timeline; B6 gọi `get_incident_details` cho cả hai dịch vụ và bỏ qua nhiễu.
+
+**Giới hạn còn lại:**
+- Trong lần chạy eval cuối, **cổng nhắc thử lại và ngân sách 3 lần không được kích hoạt** (trace không có event `validation_pending_retry` hay `retry_budget_exhausted`) vì model tự thử lại đúng. Hai cơ chế này chỉ được kiểm chứng bằng unit test, chưa bằng eval thật.
+- **Một lần chạy mỗi case có dao động.** Chạy riêng B3, B6, B10 cho 96, 98, 95 trong khi chạy cả bộ cho 100, 100, 94 với cùng mã. B6 chỉ được sửa bằng prompt nên không có bảo đảm.
+- 429 trong eval là giả lập (`retry_after_seconds` = 0); logic chờ theo `Retry-After` thật chỉ được kiểm tra bằng unit test với thời gian chờ giả.
+- Cổng nguồn chỉ kiểm tra URL của `get_incident_details`; status tool chỉ trả trang chủ nên không được kiểm tra.
+- `agent.py` thay đổi sau khi chạy `eval_after.json`; các thay đổi này chỉ kích hoạt với bộ tools bonus nên bài chính không đổi hành vi, nhưng `eval_after.json` không được chạy lại với mã cuối cùng.
