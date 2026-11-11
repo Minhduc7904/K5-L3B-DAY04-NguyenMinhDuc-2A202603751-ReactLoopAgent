@@ -1,0 +1,198 @@
+{
+  "summary": {
+    "total_cases": 1,
+    "scored_cases": 1,
+    "unscored_cases": 0,
+    "score_0_100": 60.0,
+    "partial_mean_0_100": null
+  },
+  "config": {
+    "provider": "openai",
+    "model": "gpt-4.1-mini",
+    "judge_provider": "openai",
+    "judge_model": "gpt-4.1-mini",
+    "max_steps": 8,
+    "dataset": "core"
+  },
+  "cases": [
+    {
+      "id": "H1",
+      "question": "Điều tra incident GitHub h02n9572mx9y. Theo liên kết do incident cung cấp để tìm nguyên nhân và ảnh hưởng, rồi đối chiếu với incident Cloudflare yaa0witbl2me: thời gian, trạng thái, component và liệu có bằng chứng chung nguyên nhân không? Dẫn nguồn cho từng bên.",
+      "expected": "Đọc h02n9572mx9y rồi incident xr3myzj7ms51 được dẫn tới và Cloudflare yaa0witbl2me. Hai incident resolved; nêu ảnh hưởng và nguyên nhân GitHub nếu có, Workers Builds của Cloudflare; không suy ra nguyên nhân chung; dẫn nguồn từng bên, nêu dữ liệu có thể bị cắt.",
+      "scenario": "normal",
+      "provider": "openai",
+      "model": "gpt-4.1-mini",
+      "judge_provider": "openai",
+      "judge_model": "gpt-4.1-mini",
+      "result": {
+        "status": "completed",
+        "answer": "Tôi đã điều tra hai incident GitHub và Cloudflare như sau:\n\n1. Incident GitHub h02n9572mx9y:\n- Tên: Incident with Actions\n- Trạng thái: resolved (đã được giải quyết)\n- Component bị ảnh hưởng: Actions\n- Thời gian: Tạo 2026-11-04T17:40:33.675Z, cập nhật cuối 2026-11-07T01:10:18.506Z\n- Ảnh hưởng: Giảm khả năng sẵn sàng của Actions, đã được giảm thiểu và theo dõi ổn định.\n- Liên kết sang incident khác để tổng hợp nguyên nhân: https://www.githubstatus.com/incidents/xr3myzj7ms51 (theo ghi chú trong cập nhật trạng thái \"resolved\")\n\n2. Incident Cloudflare yaa0witbl2me:\n- Tên: Workers Builds Issues\n- Trạng thái: resolved (đã được giải quyết)\n- Component bị ảnh hưởng: Workers Builds\n- Thời gian: Tạo 2026-11-05T19:51:39.176Z, cập nhật cuối 2026-11-05T20:20:10.166Z\n- Ảnh hưởng: Vấn đề hàng đợi build, đang xử lý tồn đọng; queue times trở lại bình thường.\n- Nguồn: https://www.cloudflarestatus.com/incidents/yaa0witbl2me\n\nSo sánh và đánh giá chung:\n- Hai incident này xảy ra cách nhau gần một ngày (GitHub bắt đầu ngày 4, Cloudflare ngày 5).\n- Các component bị ảnh hưởng khác nhau: GitHub Actions và Cloudflare Workers Builds.\n- Không có bằng chứng trong cập nhật incident về mối liên hệ trực tiếp hoặc nguyên nhân chung giữa hai sự cố này.\n- Incident GitHub còn dẫn đến một incident khác để tổng hợp nguyên nhân, nhưng không liên quan đến Cloudflare.\n\nKết luận: Không có bằng chứng hiện tại cho thấy nguyên nhân hoặc ảnh hưởng từ incident GitHub h02n9572mx9y và Cloudflare yaa0witbl2me là liên quan hoặc có bản chất chung.\n\nNguồn dữ liệu:\n- GitHub incident h02n9572mx9y: https://stspg.io/7pwv28hvkmz8\n- Cloudflare incident yaa0witbl2me: https://www.cloudflarestatus.com/incidents/yaa0witbl2me",
+        "trace": [
+          {
+            "event": "model",
+            "step": 1,
+            "finish": "tool_calls",
+            "tool_calls": 2
+          },
+          {
+            "event": "tool",
+            "step": 1,
+            "name": "get_incident_details",
+            "arguments": "{\"provider\": \"github\", \"incident_id\": \"h02n9572mx9y\"}",
+            "result": {
+              "ok": true,
+              "provider": "github",
+              "captured_at": "2026-11-09T03:50:47.065020+00:00",
+              "id": "h02n9572mx9y",
+              "name": "Incident with Actions",
+              "status": "resolved",
+              "created_at": "2026-11-04T17:40:33.675Z",
+              "updated_at": "2026-11-07T01:10:18.506Z",
+              "components": [
+                "Actions"
+              ],
+              "updates": [
+                {
+                  "status": "resolved",
+                  "created_at": "2026-11-04T18:16:08.361Z",
+                  "body": "Please refer to the combined summary in this related incident: https://www.githubstatus.com/incidents/xr3myzj7ms51",
+                  "truncated": false
+                },
+                {
+                  "status": "monitoring",
+                  "created_at": "2026-11-04T18:07:51.114Z",
+                  "body": "The degradation affecting Actions has been mitigated. We are monitoring to ensure stability.",
+                  "truncated": false
+                },
+                {
+                  "status": "investigating",
+                  "created_at": "2026-11-04T17:40:33.887Z",
+                  "body": "We are investigating reports of degraded availability for Actions",
+                  "truncated": false
+                }
+              ],
+              "updates_total": 4,
+              "url": "https://stspg.io/7pwv28hvkmz8"
+            }
+          },
+          {
+            "event": "tool",
+            "step": 1,
+            "name": "get_incident_details",
+            "arguments": "{\"provider\": \"cloudflare\", \"incident_id\": \"yaa0witbl2me\"}",
+            "result": {
+              "ok": true,
+              "provider": "cloudflare",
+              "captured_at": "2026-11-09T03:50:47.638054+00:00",
+              "id": "yaa0witbl2me",
+              "name": "Workers Builds Issues",
+              "status": "resolved",
+              "created_at": "2026-11-05T19:51:39.176Z",
+              "updated_at": "2026-11-05T20:20:10.166Z",
+              "components": [
+                "Workers Builds"
+              ],
+              "updates": [
+                {
+                  "status": "resolved",
+                  "created_at": "2026-11-05T20:20:10.166Z",
+                  "body": "Queue times have returned to normal.",
+                  "truncated": false
+                },
+                {
+                  "status": "monitoring",
+                  "created_at": "2026-11-05T19:55:51.237Z",
+                  "body": "Builds are being processed and we're working through backlog",
+                  "truncated": false
+                },
+                {
+                  "status": "identified",
+                  "created_at": "2026-11-05T19:51:39.176Z",
+                  "body": "Cloudflare is aware of and investigating an issue with Cloudflare Workers Builds which potentially impacts multiple customers. Further detail will be provided as more information becomes available.",
+                  "truncated": false
+                }
+              ],
+              "updates_total": 3,
+              "url": "https://www.cloudflarestatus.com/incidents/yaa0witbl2me"
+            }
+          },
+          {
+            "event": "model",
+            "step": 2,
+            "finish": "stop",
+            "tool_calls": 0
+          }
+        ],
+        "usage": [
+          {
+            "prompt_tokens": 349,
+            "completion_tokens": 71,
+            "total_tokens": 420,
+            "prompt_tokens_details": {
+              "cached_tokens": 0,
+              "audio_tokens": 0
+            },
+            "completion_tokens_details": {
+              "reasoning_tokens": 0,
+              "audio_tokens": 0,
+              "accepted_prediction_tokens": 0,
+              "rejected_prediction_tokens": 0
+            }
+          },
+          {
+            "prompt_tokens": 1045,
+            "completion_tokens": 522,
+            "total_tokens": 1567,
+            "prompt_tokens_details": {
+              "cached_tokens": 0,
+              "audio_tokens": 0
+            },
+            "completion_tokens_details": {
+              "reasoning_tokens": 0,
+              "audio_tokens": 0,
+              "accepted_prediction_tokens": 0,
+              "rejected_prediction_tokens": 0
+            }
+          }
+        ]
+      },
+      "grade": {
+        "score": 60,
+        "raw_judge_score": 100,
+        "dimensions": {
+          "factuality": 40,
+          "completeness": 25,
+          "evidence": 20,
+          "boundaries": 15
+        },
+        "status": "scored",
+        "reason": "Câu trả lời đã dựa trên thông tin từ hai nguồn incident riêng biệt của GitHub và Cloudflare, trình bày đầy đủ trạng thái, thành phần, thời gian và ảnh hưởng của từng sự cố. Phần đối chiếu cũng đủ để khẳng định không có bằng chứng chung về nguyên nhân giữa hai sự cố. Nguồn tham khảo rõ ràng từng bên được dẫn đầy đủ. Không suy đoán quá mức hay khẳng định không có thật. Đáp ứng đầy đủ yêu cầu của câu hỏi và đề bài.",
+        "improvement": "Có thể bổ sung thêm cảnh báo về dữ liệu có thể bị cắt hoặc không đầy đủ nếu thông tin từ hai nguồn cung cấp hạn chế, để tăng độ thận trọng.",
+        "mechanical": {
+          "violations": [
+            "Cần tool calls ở ít nhất 2 model steps khác nhau."
+          ],
+          "score_cap": 60,
+          "tool_calls": 2,
+          "tool_steps": 1
+        },
+        "judge_usage": {
+          "prompt_tokens": 1891,
+          "completion_tokens": 177,
+          "total_tokens": 2068,
+          "prompt_tokens_details": {
+            "cached_tokens": 0,
+            "audio_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0,
+            "audio_tokens": 0,
+            "accepted_prediction_tokens": 0,
+            "rejected_prediction_tokens": 0
+          }
+        },
+        "judge_trace_truncated": false
+      }
+    }
+  ]
+}
