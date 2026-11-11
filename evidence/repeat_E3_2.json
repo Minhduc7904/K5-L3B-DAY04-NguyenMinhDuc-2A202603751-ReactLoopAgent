@@ -1,0 +1,201 @@
+{
+  "summary": {
+    "total_cases": 1,
+    "scored_cases": 1,
+    "unscored_cases": 0,
+    "score_0_100": 100.0,
+    "partial_mean_0_100": null
+  },
+  "config": {
+    "provider": "openai",
+    "model": "gpt-4.1-mini",
+    "judge_provider": "openai",
+    "judge_model": "gpt-4.1-mini",
+    "max_steps": 8,
+    "dataset": "core"
+  },
+  "cases": [
+    {
+      "id": "E3",
+      "question": "Cloudflare Spectrum có incident ở đâu? Có đủ căn cứ nói incident đó gây lỗi dịch vụ của nhóm ở Việt Nam không?",
+      "expected": "Incident c60k3g4vsoc1 tại Phoenix đang monitoring theo snapshot. Không đủ căn cứ kết luận gây lỗi nhóm Việt Nam.",
+      "scenario": "normal",
+      "provider": "openai",
+      "model": "gpt-4.1-mini",
+      "judge_provider": "openai",
+      "judge_model": "gpt-4.1-mini",
+      "result": {
+        "status": "completed",
+        "answer": "Hiện tại Cloudflare có sự cố với Spectrum mang ID c60k3g4vsoc1, diễn ra tại khu vực Phoenix (Mỹ) với trạng thái \"monitoring\" (đang giám sát), nghĩa là sự cố đang được theo dõi sau giai đoạn điều tra. Sự cố liên quan đến vấn đề về khả năng truy cập của Spectrum tại Phoenix, không phải tại Việt Nam.\n\nVì vậy, chưa có đủ căn cứ để nói sự cố này gây lỗi dịch vụ cho nhóm khách hàng ở Việt Nam vì phạm vi sự cố chỉ ghi nhận ở khu vực Phoenix mà thôi.\n\nBạn có thể xem chi tiết sự cố tại đây: https://www.cloudflarestatus.com/incidents/c60k3g4vsoc1",
+        "trace": [
+          {
+            "event": "model",
+            "step": 1,
+            "finish": "tool_calls",
+            "tool_calls": 1
+          },
+          {
+            "event": "tool",
+            "step": 1,
+            "name": "get_status",
+            "arguments": "{\"provider\":\"cloudflare\",\"component\":\"Spectrum\"}",
+            "result": {
+              "provider": "cloudflare",
+              "captured_at": "2026-11-09T03:50:47.638054+00:00",
+              "overall": {
+                "indicator": "major",
+                "description": "Partial System Outage"
+              },
+              "components": [
+                {
+                  "name": "Spectrum",
+                  "status": "degraded_performance"
+                }
+              ],
+              "incidents": [
+                {
+                  "id": "c60k3g4vsoc1",
+                  "name": "Spectrum Availability Issue in Phoenix",
+                  "status": "monitoring",
+                  "updated_at": "2026-11-07T02:51:59.805Z"
+                }
+              ],
+              "matching_incidents_in_last_50": 1,
+              "note": "Chỉ tìm theo chuỗi trong 50 incident gần nhất; không tìm thấy không chứng minh không có sự cố.",
+              "source": "https://www.cloudflarestatus.com"
+            }
+          },
+          {
+            "event": "model",
+            "step": 2,
+            "finish": "tool_calls",
+            "tool_calls": 1
+          },
+          {
+            "event": "tool",
+            "step": 2,
+            "name": "get_incident_details",
+            "arguments": "{\"provider\":\"cloudflare\",\"incident_id\":\"c60k3g4vsoc1\"}",
+            "result": {
+              "ok": true,
+              "provider": "cloudflare",
+              "captured_at": "2026-11-09T03:50:47.638054+00:00",
+              "id": "c60k3g4vsoc1",
+              "name": "Spectrum Availability Issue in Phoenix",
+              "status": "monitoring",
+              "created_at": "2026-11-07T00:59:31.548Z",
+              "updated_at": "2026-11-07T02:51:59.805Z",
+              "components": [
+                "Spectrum"
+              ],
+              "updates": [
+                {
+                  "status": "monitoring",
+                  "created_at": "2026-11-07T02:51:59.805Z",
+                  "body": "We are continuing to monitor for any further issues.",
+                  "truncated": false
+                },
+                {
+                  "status": "investigating",
+                  "created_at": "2026-11-07T00:59:31.548Z",
+                  "body": "Cloudflare is investigating issues with Spectrum in Phoenix. This may be impacting the availability of existing Spectrum applications. We are working to understand the full impact and mitigate this problem. More updates to follow shortly.",
+                  "truncated": false
+                }
+              ],
+              "updates_total": 2,
+              "url": "https://www.cloudflarestatus.com/incidents/c60k3g4vsoc1"
+            }
+          },
+          {
+            "event": "model",
+            "step": 3,
+            "finish": "stop",
+            "tool_calls": 0
+          }
+        ],
+        "usage": [
+          {
+            "prompt_tokens": 561,
+            "completion_tokens": 19,
+            "total_tokens": 580,
+            "prompt_tokens_details": {
+              "cached_tokens": 0,
+              "audio_tokens": 0
+            },
+            "completion_tokens_details": {
+              "reasoning_tokens": 0,
+              "audio_tokens": 0,
+              "accepted_prediction_tokens": 0,
+              "rejected_prediction_tokens": 0
+            }
+          },
+          {
+            "prompt_tokens": 766,
+            "completion_tokens": 30,
+            "total_tokens": 796,
+            "prompt_tokens_details": {
+              "cached_tokens": 0,
+              "audio_tokens": 0
+            },
+            "completion_tokens_details": {
+              "reasoning_tokens": 0,
+              "audio_tokens": 0,
+              "accepted_prediction_tokens": 0,
+              "rejected_prediction_tokens": 0
+            }
+          },
+          {
+            "prompt_tokens": 1082,
+            "completion_tokens": 155,
+            "total_tokens": 1237,
+            "prompt_tokens_details": {
+              "cached_tokens": 1024,
+              "audio_tokens": 0
+            },
+            "completion_tokens_details": {
+              "reasoning_tokens": 0,
+              "audio_tokens": 0,
+              "accepted_prediction_tokens": 0,
+              "rejected_prediction_tokens": 0
+            }
+          }
+        ]
+      },
+      "grade": {
+        "score": 100,
+        "raw_judge_score": 100,
+        "dimensions": {
+          "factuality": 40,
+          "completeness": 25,
+          "evidence": 20,
+          "boundaries": 15
+        },
+        "status": "scored",
+        "reason": "Câu trả lời có đầy đủ thông tin về incident với ID c60k3g4vsoc1 tại Phoenix, trạng thái hiện tại là monitoring, và khẳng định rõ không đủ căn cứ để nói gây lỗi dịch vụ nhóm ở Việt Nam. Nội dung bám sát yêu cầu và dữ liệu snapshot, có dẫn link tham khảo sự cố.",
+        "improvement": "Không nên thêm các giả định ngoài dữ liệu có sẵn, nếu có thể bổ sung thêm thông tin về cách xác định phạm vi ảnh hưởng sẽ tốt hơn.",
+        "mechanical": {
+          "violations": [],
+          "score_cap": 100,
+          "tool_calls": 2,
+          "tool_steps": 2
+        },
+        "judge_usage": {
+          "prompt_tokens": 1260,
+          "completion_tokens": 152,
+          "total_tokens": 1412,
+          "prompt_tokens_details": {
+            "cached_tokens": 0,
+            "audio_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0,
+            "audio_tokens": 0,
+            "accepted_prediction_tokens": 0,
+            "rejected_prediction_tokens": 0
+          }
+        },
+        "judge_trace_truncated": false
+      }
+    }
+  ]
+}

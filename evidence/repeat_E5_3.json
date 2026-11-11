@@ -1,0 +1,140 @@
+{
+  "summary": {
+    "total_cases": 1,
+    "scored_cases": 1,
+    "unscored_cases": 0,
+    "score_0_100": 95.0,
+    "partial_mean_0_100": null
+  },
+  "config": {
+    "provider": "openai",
+    "model": "gpt-4.1-mini",
+    "judge_provider": "openai",
+    "judge_model": "gpt-4.1-mini",
+    "max_steps": 8,
+    "dataset": "core"
+  },
+  "cases": [
+    {
+      "id": "E5",
+      "question": "Tìm incident gần đây về Copilot Mission Control trên GitHub. Nếu trường components rỗng, có thể kết luận không có dịch vụ bị ảnh hưởng không?",
+      "expected": "Tìm bằng title/nội dung; components rỗng không chứng minh không có ảnh hưởng. Nếu không tìm được phải nói giới hạn, không bịa.",
+      "scenario": "normal",
+      "provider": "openai",
+      "model": "gpt-4.1-mini",
+      "judge_provider": "openai",
+      "judge_model": "gpt-4.1-mini",
+      "result": {
+        "status": "completed",
+        "answer": "Hiện tại không có incident nào đang hoạt động liên quan đến Copilot Mission Control trên GitHub, vì phần components trả về là rỗng và overall status là \"All Systems Operational\" (mọi hệ thống hoạt động bình thường).\n\nCó một incident gần đây nhưng đã được giải quyết, với ID \"tc28c0wzrnpz\" có tên \"Increased task-related errors for Copilot Mission Control\", cập nhật lần cuối ngày 2026-11-04.\n\nTuy nhiên, lưu ý rằng việc trường components rỗng không hoàn toàn khẳng định rằng không có dịch vụ nào bị ảnh hưởng, chỉ là không có component nào được liệt kê là đang gặp sự cố trong lần kiểm tra này. Đây là kết quả tìm kiếm trong 50 incident gần nhất nên có thể có sự cố không được phát hiện trong lần kiểm tra này.\n\nNguồn: https://www.githubstatus.com, incident ID: tc28c0wzrnpz (đã resolved).",
+        "trace": [
+          {
+            "event": "model",
+            "step": 1,
+            "finish": "tool_calls",
+            "tool_calls": 1
+          },
+          {
+            "event": "tool",
+            "step": 1,
+            "name": "get_status",
+            "arguments": "{\"provider\":\"github\",\"component\":\"Copilot Mission Control\"}",
+            "result": {
+              "provider": "github",
+              "captured_at": "2026-11-09T03:50:47.065020+00:00",
+              "overall": {
+                "indicator": "none",
+                "description": "All Systems Operational"
+              },
+              "components": [],
+              "incidents": [
+                {
+                  "id": "tc28c0wzrnpz",
+                  "name": "Increased task-related errors for Copilot Mission Control",
+                  "status": "resolved",
+                  "updated_at": "2026-11-04T10:01:44.589Z"
+                }
+              ],
+              "matching_incidents_in_last_50": 1,
+              "note": "Chỉ tìm theo chuỗi trong 50 incident gần nhất; không tìm thấy không chứng minh không có sự cố.",
+              "source": "https://www.githubstatus.com"
+            }
+          },
+          {
+            "event": "model",
+            "step": 2,
+            "finish": "stop",
+            "tool_calls": 0
+          }
+        ],
+        "usage": [
+          {
+            "prompt_tokens": 569,
+            "completion_tokens": 21,
+            "total_tokens": 590,
+            "prompt_tokens_details": {
+              "cached_tokens": 0,
+              "audio_tokens": 0
+            },
+            "completion_tokens_details": {
+              "reasoning_tokens": 0,
+              "audio_tokens": 0,
+              "accepted_prediction_tokens": 0,
+              "rejected_prediction_tokens": 0
+            }
+          },
+          {
+            "prompt_tokens": 762,
+            "completion_tokens": 204,
+            "total_tokens": 966,
+            "prompt_tokens_details": {
+              "cached_tokens": 0,
+              "audio_tokens": 0
+            },
+            "completion_tokens_details": {
+              "reasoning_tokens": 0,
+              "audio_tokens": 0,
+              "accepted_prediction_tokens": 0,
+              "rejected_prediction_tokens": 0
+            }
+          }
+        ]
+      },
+      "grade": {
+        "score": 95,
+        "raw_judge_score": 95,
+        "dimensions": {
+          "factuality": 38,
+          "completeness": 23,
+          "evidence": 19,
+          "boundaries": 15
+        },
+        "status": "scored",
+        "reason": "Câu trả lời đã kiểm tra và đưa ra thông tin chính xác về tình trạng gần đây của Copilot Mission Control, có nêu rõ có 1 incident đã resolved và hiện tại components rỗng, overall status tốt. Đồng thời, câu trả lời cảnh báo đúng rằng components rỗng không khẳng định chắc chắn không có ảnh hưởng. Tuy nhiên, câu trả lời có thể thêm phần thừa nhận giới hạn do chỉ tìm trong 50 incident gần nhất theo yêu cầu để rõ hơn tính đầy đủ.",
+        "improvement": "Nên bổ sung phần nhấn mạnh về giới hạn tìm kiếm chỉ trong 50 incidents gần nhất và không nên quá tự tin kết luận dựa trên components rỗng.",
+        "mechanical": {
+          "violations": [],
+          "score_cap": 100,
+          "tool_calls": 1,
+          "tool_steps": 1
+        },
+        "judge_usage": {
+          "prompt_tokens": 937,
+          "completion_tokens": 182,
+          "total_tokens": 1119,
+          "prompt_tokens_details": {
+            "cached_tokens": 0,
+            "audio_tokens": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0,
+            "audio_tokens": 0,
+            "accepted_prediction_tokens": 0,
+            "rejected_prediction_tokens": 0
+          }
+        },
+        "judge_trace_truncated": false
+      }
+    }
+  ]
+}
