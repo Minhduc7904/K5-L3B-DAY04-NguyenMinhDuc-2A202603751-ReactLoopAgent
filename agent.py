@@ -22,11 +22,13 @@ Khi đọc incident: nếu bất kỳ update nào chứa ID hoặc URL incident 
 bạn PHẢI gọi get_incident_details cho incident đó ở lượt kế tiếp, trước khi trả lời.
 Chép ID chính xác từng ký tự từ URL. Nếu tool trả INCIDENT_NOT_FOUND, kiểm tra lại ID đã chép
 đúng chưa và thử lại một lần trước khi kết luận là không có dữ liệu.
-Khi người dùng khẳng định trạng thái hiện tại (đang outage/down), luôn gọi get_status cho provider và
-component đó để đối chiếu với snapshot, ngoài get_incident_details; không xác nhận nếu incident đã
-resolved và component đang operational.
-Khi tool trả lỗi hoặc timeout cho một nhà cung cấp, không được kết luận trạng thái của nhà cung cấp đó
-(kể cả "operational") dù người dùng yêu cầu; nói rõ bạn chưa biết.'''
+Nguyên tắc kiểm chứng:
+- Khẳng định của người dùng về trạng thái hiện tại phải được đối chiếu bằng dữ liệu trạng thái hiện tại
+  (get_status), không chỉ bằng incident lịch sử; nếu hai nguồn khác nhau, nói rõ sự khác biệt.
+- Khi tool lỗi hoặc timeout cho một nhà cung cấp, không kết luận hay suy đoán trạng thái của nhà cung cấp
+  đó, kể cả khi người dùng yêu cầu; nói rõ bạn chưa biết và vẫn trình bày phần đã kiểm tra được.
+- Không tự đặt ID incident. Chỉ dùng ID có trong câu hỏi hoặc trong kết quả tool; chưa có ID thì lấy từ
+  get_status, không có thì nói thiếu dữ liệu.'''
 
 # Chỉ nối thêm khi bộ tools có system_prompt riêng (bonus); bài chính không bị ảnh hưởng.
 BONUS_RULES = '''Quy tắc bổ sung:
@@ -150,6 +152,14 @@ def _text(message):
     return content if isinstance(content, str) else ''
 
 
+def _is_invented_id(args, question, observed):
+    """True nếu incident_id chưa từng xuất hiện trong câu hỏi hay kết quả tool nào (model tự đặt)."""
+    wanted = args.get('incident_id') if args else None
+    if not isinstance(wanted, str) or not wanted:
+        return False
+    return wanted not in question and not any(wanted in ids for ids in observed.values())
+
+
 def _traced(trace, step, call, observation):
     """Ghi trace đúng thứ model sẽ thấy (đã có attempts, retries_remaining, did_you_mean...)."""
     trace.append({'event': 'tool', 'step': step, 'name': call['name'],
@@ -157,12 +167,13 @@ def _traced(trace, step, call, observation):
     return observation
 
 
-def _call_tool(tools, call, step, trace, rate_limited, pending, observed, failed):
+def _call_tool(tools, call, step, trace, rate_limited, pending, observed, failed, question=''):
     """Gọi tool một lần; model vẫn thấy mọi lỗi, code chỉ ép ngân sách thử lại khi gặp 429.
 
     rate_limited đếm số lần 429 theo (tool, provider) trong cả run để model không thể
     vòng qua giới hạn bằng cách gọi lại ở lượt sau. pending giữ các tool vừa bị 429
-    mà còn lượt thử lại. observed lưu ID incident đã thấy; failed lưu provider đang lỗi.
+    mà còn lượt thử lại. observed lưu ID incident đã thấy; failed lưu provider đang lỗi;
+    question là câu hỏi gốc để nhận ra ID do model tự đặt.
     """
     args, _ = _parse_arguments(call['arguments'])
     provider_arg = args.get('provider') if args else None
@@ -187,6 +198,11 @@ def _call_tool(tools, call, step, trace, rate_limited, pending, observed, failed
             result = {**result, 'did_you_mean': suggestion,
                       'message': f"Không tìm thấy ID này. Có phải bạn muốn dùng '{suggestion}' (ID đã thấy "
                                  'trong dữ liệu)? Hãy gọi lại với ID đó, chép chính xác từng ký tự.'}
+        elif _is_invented_id(args, question, observed):
+            result = {**result, 'hint': 'ID chưa từng xuất hiện trong câu hỏi hoặc dữ liệu tool',
+                      'message': 'ID này chưa từng xuất hiện trong câu hỏi hay dữ liệu tool, có vẻ do bạn tự đặt. '
+                                 'Đừng tự đặt ID: hãy gọi get_status để lấy danh sách incident rồi dùng ID có thật; '
+                                 'nếu không có thì nói rõ thiếu dữ liệu và không khẳng định gì về incident đó.'}
     if error != 'RATE_LIMITED':
         pending.pop(key, None)
         return _traced(trace, step, call, result)
@@ -297,7 +313,7 @@ def run_agent(question, provider, tools, max_steps=6):
             return finish('error', answer=_text(assistant), error=message)
 
         for call in calls:  # xử lý MỌI call trước khi gọi model tiếp
-            result = _call_tool(tools, call, step, trace, rate_limited, pending, observed, failed)
+            result = _call_tool(tools, call, step, trace, rate_limited, pending, observed, failed, question)
             if (call['name'] == 'get_incident_details' and result.get('ok')
                     and isinstance(result.get('url'), str) and result['url'] and result['url'] not in sources):
                 sources.append(result['url'])

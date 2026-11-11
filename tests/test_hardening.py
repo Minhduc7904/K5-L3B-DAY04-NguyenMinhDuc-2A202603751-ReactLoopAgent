@@ -237,6 +237,41 @@ class DefensiveToolPathTests(unittest.TestCase):
         self.assertFalse(events(result, 'validation_missing_source'))
 
 
+class InventedIdTests(unittest.TestCase):
+    def lookup(self, question, calls):
+        responses = [tool_call(str(i), 'get_incident_details', json.dumps(args)) for i, args in enumerate(calls)]
+        fake = FakeProvider(responses + [final('Xong.')])
+        run_agent(question, fake, StatusTools(), max_steps=len(calls) + 2)
+        return [json.loads(h[-1]['content']) for h in fake.histories[1:len(calls) + 1]]
+
+    def test_id_never_seen_gets_hint(self):
+        miss, = self.lookup('Có incident nào không?', [{'provider': 'github', 'incident_id': 'phoenix'}])
+        self.assertEqual(miss['error'], 'INCIDENT_NOT_FOUND')
+        self.assertIn('hint', miss)
+        self.assertIn('get_status', miss['message'])
+
+    def test_id_from_question_gets_no_hint(self):
+        miss, = self.lookup('Cho tôi xem incident zz9999 của GitHub', [{'provider': 'github', 'incident_id': 'zz9999'}])
+        self.assertEqual(miss['error'], 'INCIDENT_NOT_FOUND')
+        self.assertNotIn('hint', miss)
+
+    def test_id_seen_in_tool_result_gets_no_hint(self):
+        _, miss = self.lookup('x', [{'provider': 'github', 'incident_id': 'h02n9572mx9y'},
+                                    {'provider': 'cloudflare', 'incident_id': 'h02n9572mx9y'}])
+        self.assertEqual(miss['error'], 'INCIDENT_NOT_FOUND')
+        self.assertNotIn('hint', miss)
+
+    def test_typo_still_gets_did_you_mean_not_hint(self):
+        _, miss = self.lookup('x', [{'provider': 'github', 'incident_id': 'h02n9572mx9y'},
+                                    {'provider': 'github', 'incident_id': 'xr3myzjms51'}])
+        self.assertIn('did_you_mean', miss)
+        self.assertNotIn('hint', miss)
+
+    def test_non_string_id_does_not_crash(self):
+        miss, = self.lookup('x', [{'provider': 'github', 'incident_id': ['a']}])
+        self.assertFalse(miss['ok'])
+
+
 class EmptyAnswerTests(unittest.TestCase):
     def test_empty_answer_is_nudged_once_then_completes(self):
         for empty in ('', '   \n', None):
