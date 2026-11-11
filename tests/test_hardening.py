@@ -377,6 +377,7 @@ class UnfollowedLinkGateTests(unittest.TestCase):
 class DisclosureGateTests(unittest.TestCase):
     """Chỉ áp dụng cho bộ bonus (tools có system_prompt)."""
     DATE = BonusTools('snapshot').status('vercel')['captured_at'][:10]  # YYYY-MM-DD
+    SRC = BonusTools('snapshot').status('vercel')['source']  # URL nguồn của provider
 
     def run_bonus(self, answers, scenario='normal', calls=1, max_steps=8):
         script = [tool_call(str(i), 'get_vercel_status', '{}') for i in range(calls)] + [final(a) for a in answers]
@@ -386,7 +387,7 @@ class DisclosureGateTests(unittest.TestCase):
         return result, fake
 
     def test_missing_date_is_nudged_once(self):
-        result, fake = self.run_bonus(['Vercel ổn.', f'Vercel ổn (dữ liệu lúc {self.DATE}).'])
+        result, fake = self.run_bonus(['Vercel ổn.', f'Vercel ổn (dữ liệu lúc {self.DATE}, nguồn {self.SRC}).'])
         evs = events(result, 'validation_missing_disclosure')
         self.assertEqual(len(evs), 1)
         self.assertTrue(evs[0]['missing'][0].startswith('vercel:'))
@@ -395,20 +396,20 @@ class DisclosureGateTests(unittest.TestCase):
         self.assertEqual(fake.histories[-1][-1]['role'], 'user')
 
     def test_answer_with_date_is_not_nudged(self):
-        for text in (f'Lúc {self.DATE} ổn.', 'Lúc {2}/{1}/{0} ổn.'.format(*self.DATE.split('-'))):
+        for text in (f'Lúc {self.DATE} ổn {self.SRC}.', 'Lúc {2}/{1}/{0} ổn {3}.'.format(*self.DATE.split('-'), self.SRC)):
             with self.subTest(text=text):
                 result, _ = self.run_bonus([text])
                 self.assertFalse(events(result, 'validation_missing_disclosure'))
 
     def test_429_must_be_mentioned_when_it_happened(self):
-        result, _ = self.run_bonus([f'{self.DATE}: Vercel ổn.', f'{self.DATE}: gặp 429, thử lại thì ổn.'],
+        result, _ = self.run_bonus([f'{self.DATE}: Vercel ổn {self.SRC}.', f'{self.DATE}: gặp 429, thử lại thì ổn {self.SRC}.'],
                                    scenario='rate_limit_once', calls=2)
         evs = events(result, 'validation_missing_disclosure')
         self.assertEqual([e['missing'] for e in evs], [['rate_limit']])
         self.assertIn('429', result['answer'])
 
     def test_no_429_requirement_without_rate_limit(self):
-        result, _ = self.run_bonus([f'{self.DATE}: ổn.'])
+        result, _ = self.run_bonus([f'{self.DATE}: ổn {self.SRC}.'])
         self.assertFalse(events(result, 'validation_missing_disclosure'))
 
     def test_nudge_is_not_repeated(self):
@@ -426,6 +427,22 @@ class DisclosureGateTests(unittest.TestCase):
         self.assertEqual(result['status'], 'completed')
         self.assertEqual(result['answer'], 'Ổn.')
         self.assertEqual(len(events(result, 'disclosure_fallback')), 1)
+        self.assertIn('warning', result)  # không im lặng: kết quả ghi rõ lời nhắc đã thất bại
+
+    def test_missing_source_url_is_nudged(self):
+        result, _ = self.run_bonus([f'{self.DATE}: ổn.', f'{self.DATE}: ổn {self.SRC}.'])
+        evs = events(result, 'validation_missing_disclosure')
+        self.assertEqual([e['missing'] for e in evs], [[f'source: {self.SRC}']])
+
+    def test_truncation_or_bad_response_after_nudge_stays_an_error(self):
+        truncated = final('Cắt dở')
+        truncated['finish'] = 'length'
+        for label, follow_up in (('length', truncated), ('malformed', {'message': None, 'calls': []})):
+            with self.subTest(case=label):
+                fake = FakeProvider([tool_call('a', 'get_vercel_status', '{}'), final('Ổn.'), follow_up])
+                result = run_agent('x', fake, BonusTools('snapshot'), max_steps=8)
+                self.assertEqual(result['status'], 'error')
+                self.assertNotIn('warning', result)
 
     def test_main_task_tools_are_not_affected(self):
         fake = FakeProvider([tool_call('a', 'get_status', '{"provider":"github"}'), final('Ổn.')])

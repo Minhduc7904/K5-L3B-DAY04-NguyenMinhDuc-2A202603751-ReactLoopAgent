@@ -42,8 +42,9 @@ BONUS_RULES = '''Quy tắc bổ sung:
   đừng hỏi lại người dùng. Khi retry_exhausted=true: dừng gọi tool đó, nói rõ bạn chưa biết trạng thái
   dịch vụ đó và không coi 429 là outage.
 - Không có tool cho một nhà cung cấp thì nói thiếu dữ liệu; không bịa trạng thái hay URL.
-- Câu trả lời cuối phải nêu thời điểm captured_at (ngày giờ) của dữ liệu từng nhà cung cấp đã đọc, và nếu từng
-  gặp 429 thì nói rõ đã gặp, đã thử lại mấy lần và kết quả.'''
+- Câu trả lời cuối phải nêu thời điểm captured_at (ngày giờ) và URL nguồn (trường source) của từng nhà cung cấp
+  đã đọc. Nếu từng gặp 429 thì nói rõ đã gặp, đã thử lại mấy lần và kết quả; số lần thử lại phải khớp số lần gọi
+  tool trong dữ liệu (lần gọi đầu tiên không phải là lần thử lại).'''
 
 
 def _parse_arguments(raw):
@@ -178,10 +179,11 @@ def _mentions_date(answer, captured_at):
     return any(form in answer for form in forms)
 
 
-def _missing_disclosure(answer, captured, had_rate_limit):
+def _missing_disclosure(answer, captured, had_rate_limit, source_urls=()):
     """Những điều bộ bonus đòi hỏi mà câu trả lời còn thiếu (danh sách rỗng nếu đủ)."""
     missing = [f'{provider}: {stamp}' for provider, stamp in sorted(captured.items())
                if not _mentions_date(answer, stamp)]
+    missing += [f'source: {url}' for url in source_urls if url not in answer]
     lowered = answer.lower()
     if had_rate_limit and not any(word in lowered for word in _RATE_LIMIT_WORDS):
         missing.append('rate_limit')
@@ -283,6 +285,7 @@ def run_agent(question, provider, tools, max_steps=6):
     empty_reminded = False
     is_bonus = tool_prompt is not None
     captured = {}      # provider -> captured_at của dữ liệu đã đọc (chỉ dùng cho cổng công bố của bonus)
+    provider_sources = {}  # provider -> URL nguồn (trường source) của dữ liệu đã đọc
     disclosure_reminded = False
     linked = {}        # (provider, id) -> id của incident có update trỏ tới nó
     tried = set()      # (provider, id) đã được gọi get_incident_details
@@ -294,9 +297,6 @@ def run_agent(question, provider, tools, max_steps=6):
     trace, usage = [], []
 
     def finish(status, answer='', error=None):
-        if status == 'error' and held:  # lời nhắc bổ sung (công bố, theo liên kết): lỗi sau đó không được làm mất câu trả lời
-            trace.append({'event': 'disclosure_fallback', 'error': error})
-            status, answer, error = 'completed', held[0], None
         out = {'status': status, 'answer': answer, 'trace': trace, 'usage': usage}
         if error:
             out['error'] = error
@@ -308,6 +308,11 @@ def run_agent(question, provider, tools, max_steps=6):
         except Exception as exc:  # lỗi provider kết thúc run, không báo completed
             message = f'{type(exc).__name__}: {str(exc)[:200]}'
             trace.append({'event': 'provider_error', 'step': step, 'error': message})
+            if held:  # chỉ lời nhắc bổ sung thất bại: câu trả lời trước đó vẫn dùng được, nhưng phải ghi cảnh báo
+                trace.append({'event': 'disclosure_fallback', 'step': step, 'error': message})
+                out = finish('completed', answer=held[0])
+                out['warning'] = f'Lời nhắc bổ sung thất bại ({message}); trả câu trả lời trước đó.'
+                return out
             return finish('error', error=message)
         response, problem = _normalize_response(raw_response)
         if problem:  # response hỏng không được báo completed
@@ -378,16 +383,19 @@ def run_agent(question, provider, tools, max_steps=6):
                         'ghi ít nhất một URL sau: ' + ', '.join(sources)})
                     continue
                 if is_bonus and not disclosure_reminded and step < max_steps:  # nhắc đúng một lần
-                    missing = _missing_disclosure(answer, captured, bool(rate_limited))
+                    missing = _missing_disclosure(answer, captured, bool(rate_limited),
+                                                  sorted(set(provider_sources.values())))
                     if missing:
                         disclosure_reminded = True
                         held[:] = [answer]
                         trace.append({'event': 'validation_missing_disclosure', 'step': step, 'missing': missing})
                         messages.append({'role': 'user', 'content':
                             'Hãy viết lại câu trả lời cuối và bổ sung: ' + '; '.join(
-                                'thời điểm captured_at (' + item + ')' if item != 'rate_limit'
-                                else 'việc đã gặp lỗi 429 (rate limit), đã thử lại thế nào và kết quả'
-                                for item in missing) + '. Giữ nguyên các URL nguồn.'})
+                                'URL nguồn ' + item[len('source: '):] if item.startswith('source: ')
+                                else 'việc đã gặp lỗi 429 (rate limit), đã thử lại thế nào và kết quả (số lần '
+                                     'thử lại phải khớp số lần gọi tool)' if item == 'rate_limit'
+                                else 'thời điểm captured_at (' + item + ')'
+                                for item in missing) + '.'})
                         continue
                 return finish('completed', answer=answer)
             message = f'Model dừng với lý do không hỗ trợ: {reason!r}.'
@@ -404,6 +412,8 @@ def run_agent(question, provider, tools, max_steps=6):
             if (result.get('ok') is not False and isinstance(result.get('provider'), str)
                     and isinstance(result.get('captured_at'), str)):
                 captured[result['provider']] = result['captured_at']
+                if isinstance(result.get('source'), str) and result['source']:
+                    provider_sources[result['provider']] = result['source']
             messages.append({'role': 'tool', 'tool_call_id': call['id'],
                              'content': json.dumps(result, ensure_ascii=False, default=str)})
 
