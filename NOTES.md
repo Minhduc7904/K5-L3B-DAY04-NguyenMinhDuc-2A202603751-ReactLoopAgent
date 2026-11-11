@@ -47,14 +47,28 @@ Bài 4, `agent.py`:
 
 | Chỉ số | `eval_before.json` | `eval_after.json` |
 |---|---|---|
-| Điểm tổng |  |  |
-| Điểm case đã chọn |  |  |
-| Số model calls |  |  |
-| Token, chi phí nếu có |  |  |
+| Điểm tổng | 92,14 | **95,86** (+3,72) |
+| Điểm case đã chọn | H1 = 60 (H6 = 60) | H1 = **100** (H6 = **95**) |
+| Số model calls | 49 (tổng 22 case; H1 = 2) | 54 (H1 = 3) |
+| Token, chi phí nếu có | 36.460 token của agent (chưa tính token của judge) | 46.625 token của agent (+28%; chưa tính token của judge) |
 
-- Lỗi đã giải quyết:
-- Lỗi còn lại hoặc mới xuất hiện:
+Cả hai lần dùng cùng cấu hình (khối `config` giống hệt): provider `openai`, model `gpt-4.1-mini`, judge cùng provider và model, `max_steps` = 8, dataset `core`. Cả 22 case đều được chấm ở hai lần.
+
+Chênh lệch theo case (chỉ liệt kê case có đổi điểm): H1 60→100, H6 60→95, A5 88→100, A7 94→100, H7 75→80, E5 100→94, H8 100→90. Các case còn lại không đổi.
+
+- **Lỗi đã giải quyết:** **H1**. Ở lần 2, model gọi `get_incident_details` cho `xr3myzj7ms51` ở step 2 nên đủ 2 model steps có tool call, hết vi phạm `grade.mechanical`. Cổng nguồn cũng chạy ngoài đời: event `validation_missing_source` xuất hiện ở H6 và E5, và model đã sửa câu trả lời trong ngân sách `max_steps`.
+- **Lỗi còn lại hoặc mới xuất hiện:**
+  - **H6 = 95 nhưng nội dung vẫn sai.** Model theo link nhưng chép sai ID thành `xr3myzjms51` (thiếu chữ `7`), nhận `INCIDENT_NOT_FOUND` và không thử lại dù prompt đã dặn. Câu trả lời kết luận sai rằng incident gộp không nằm trong 50 incident gần nhất. Lỗi này lặp lại ở cả hai lần chạy thử, nên có vẻ ổn định. Điểm cao vì kiểm tra bằng code chỉ đếm số step, còn judge chấm 95.
+  - **H2 = 50, không đổi.** Agent chỉ gọi `get_incident_details`, không gọi `get_status`, nên bị trần 50 (`Chưa gọi tool cần thiết: get_status`). Nằm ngoài phạm vi thay đổi.
+  - **H7 = 80 (lần 1: 75).** Cloudflare timeout nhưng agent vẫn viết "tôi kết luận Cloudflare Spectrum đang hoạt động bình thường" theo yêu cầu của người dùng; judge tự ghi là bịa kết luận nhưng vẫn cho 80.
+  - **E5 100→94 và H8 100→90.** Không có vi phạm từ kiểm tra bằng code. E5 có thêm một lượt vì cổng nguồn (calls 2→4). H8 không đổi số calls (2→2) và không liên quan thay đổi của tôi, nên nhiều khả năng là dao động của model hoặc judge.
+  - **Chi phí tăng:** +5 model calls và +10.165 token (+28%), một phần do cổng nguồn bắt viết lại và do model gọi thêm tool theo link.
 
 ## 5. Giới hạn
 
-Nêu giới hạn của điểm judge, của snapshot và của việc chỉ chạy một lần mỗi phiên bản.
+- **Điểm judge là ước lượng.** Judge dùng cùng model với agent (`gpt-4.1-mini`) nên có thể thiên lệch. Ví dụ ở lần 1: H7 được chấm 75 dù judge tự ghi agent "không tuân thủ expected" (Cloudflare timeout nhưng vẫn kết luận operational), và A5 được chấm 88 dù câu trả lời đổi năm 2026 thành 2025. Ngược lại H1 có judge cho 96 nhưng bị trần 60 bởi kiểm tra bằng code, nên điểm cuối phụ thuộc nhiều vào `grade.mechanical`.
+- **Snapshot cố định.** Dữ liệu chụp lúc 2026-11-09T03:50:47Z và chỉ gồm 50 incident gần nhất; tìm theo chuỗi gần đúng nên tìm không thấy không chứng minh incident không tồn tại. Kết quả không phản ánh trạng thái thực tế hiện tại.
+- **Chỉ chạy một lần mỗi phiên bản.** Model có tính ngẫu nhiên, nên chênh lệch điểm giữa hai lần chưa đủ để kết luận cải tiến ổn định. Chỉ H1 và H6 có nguyên nhân rõ ràng gắn với thay đổi (có trace chứng minh). Các thay đổi ở A5 (+12), A7 (+6), H7 (+5), E5 (-6) và H8 (-10) không có cơ chế tương ứng trong thay đổi nên khả năng cao là dao động ngẫu nhiên; vì vậy không thể nói toàn bộ +3,72 điểm là do cải tiến. Mức tăng chắc chắn nhất là H1 (+40) và H6 (+35), tương đương khoảng +3,4 điểm tổng.
+- **Điểm cao không bằng nội dung đúng.** H6 đạt 95 dù chép sai ID incident và kết luận sai. Kiểm tra bằng code chỉ đếm số step, còn judge cùng model với agent không phát hiện lỗi này.
+- **Prompt không bảo đảm hành vi.** Quy tắc "thử lại khi `INCIDENT_NOT_FOUND`" không được model tuân thủ. Muốn chắc chắn cần cơ chế trong code (ví dụ gợi ý lại ID đúng từ URL đã quan sát), chưa làm trong bài này.
+- **Kiểm tra nguồn chỉ kiểm tra sự hiện diện của một URL**, không chứng minh mọi nhận định đều có nguồn.
