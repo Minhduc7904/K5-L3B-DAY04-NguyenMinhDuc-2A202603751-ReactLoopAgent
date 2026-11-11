@@ -1,12 +1,15 @@
 """Tests offline cho các lỗi/rủi ro phát hiện khi chấm độc lập."""
 import json
+import math
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / 'evals'))
+import agent
 from agent import run_agent
 from bonus.tools import BonusTools
 from scenarios import ScenarioTools
@@ -232,6 +235,59 @@ class DefensiveToolPathTests(unittest.TestCase):
         result, _ = self.run_stub({'ok': True, 'url': 123}, 'get_incident_details',
                                   '{"provider":"github","incident_id":"x"}')
         self.assertFalse(events(result, 'validation_missing_source'))
+
+
+class EmptyAnswerTests(unittest.TestCase):
+    def test_empty_answer_is_nudged_once_then_completes(self):
+        for empty in ('', '   \n', None):
+            with self.subTest(empty=empty):
+                fake = FakeProvider([final(empty), final('Có đáp án.')])
+                result = run_agent('x', fake, StatusTools())
+                self.assertEqual(result['status'], 'completed')
+                self.assertEqual(result['answer'], 'Có đáp án.')
+                self.assertEqual(len(events(result, 'validation_empty_answer')), 1)
+                self.assertEqual(fake.histories[1][-1]['role'], 'user')
+
+    def test_repeated_empty_answer_is_error(self):
+        result = run_agent('x', FakeProvider([final(''), final(' ')]), StatusTools())
+        self.assertEqual(result['status'], 'error')
+        self.assertIn('rỗng', result['error'])
+
+    def test_empty_answer_on_last_step_is_error(self):
+        result = run_agent('x', FakeProvider([final('')]), StatusTools(), max_steps=1)
+        self.assertEqual(result['status'], 'error')
+
+    def test_non_string_content_counts_as_empty(self):
+        response = final('x')
+        response['message']['content'] = ['phần', 'tử']
+        result = run_agent('x', FakeProvider([response, final('Ổn.')]), StatusTools())
+        self.assertEqual(result['answer'], 'Ổn.')
+
+
+class RetryDelayTests(unittest.TestCase):
+    def sleeps_for(self, retry_after):
+        value = {'ok': False, 'error': 'RATE_LIMITED', 'retry_after_seconds': retry_after}
+        fake = FakeProvider([tool_call(str(i), 'get_status', '{"provider":"github"}') for i in range(4)]
+                            + [final('Chưa biết trạng thái.')] * 2)
+        slept = []
+        with mock.patch('agent.time.sleep', side_effect=slept.append):
+            result = run_agent('x', fake, StubTools(value), max_steps=8)
+        return slept, result
+
+    def test_invalid_retry_after_never_reaches_sleep(self):
+        for value in (float('nan'), -3, '-1', 10 ** 400, 'abc', [], {}):
+            with self.subTest(retry_after=value):
+                slept, _ = self.sleeps_for(value)
+                self.assertTrue(slept)
+                for seconds in slept:
+                    self.assertTrue(math.isfinite(seconds) and 0 <= seconds <= agent.MAX_RETRY_WAIT)
+
+    def test_infinite_or_huge_retry_after_stops_without_sleeping(self):
+        for value in (float('inf'), 1e9, '9999'):
+            with self.subTest(retry_after=value):
+                slept, result = self.sleeps_for(value)
+                self.assertEqual(slept, [])
+                self.assertEqual(result['status'], 'completed')
 
 
 if __name__ == '__main__':

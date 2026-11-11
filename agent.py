@@ -1,6 +1,7 @@
 """ReAct agent loop tự viết (không dùng framework) cho bài lab status agent."""
 import difflib
 import json
+import math
 import re
 import time
 
@@ -71,9 +72,11 @@ def _retry_delay(result, attempts):
     raw = result.get('retry_after_seconds', result.get('retry_after'))
     try:
         delay = float(raw) if raw is not None else float(attempts)
-    except (TypeError, ValueError):  # Retry-After dạng ngày giờ HTTP -> dùng backoff đơn giản
+    except (TypeError, ValueError, OverflowError):  # Retry-After dạng ngày giờ HTTP -> backoff đơn giản
         delay = float(attempts)
-    return None if delay > MAX_RETRY_WAIT else max(delay, 0.0)
+    if math.isnan(delay) or delay < 0:  # giá trị vô nghĩa -> backoff; inf thì vượt MAX_RETRY_WAIT nên dừng
+        delay = float(attempts)
+    return None if delay > MAX_RETRY_WAIT else delay
 
 
 _ID_IN_TEXT = re.compile(r'incidents/([a-z0-9]+)')
@@ -213,6 +216,7 @@ def run_agent(question, provider, tools, max_steps=6):
     observed = {}      # provider -> các ID incident đã thấy trong tool result
     failed = {}        # provider -> lỗi gần nhất khi tool của provider đó chưa được gọi lại thành công
     failure_reminded = False
+    empty_reminded = False
     messages = [{'role': 'system', 'content': system_prompt},
                 {'role': 'user', 'content': question}]
     sources = []  # URL của các incident đã đọc thành công
@@ -257,6 +261,15 @@ def run_agent(question, provider, tools, max_steps=6):
                     messages.append({'role': 'user', 'content':
                         'Tool ' + ', '.join(names) + ' vừa bị rate limit nhưng vẫn còn lượt thử lại. '
                         'Hãy gọi lại tool đó trước khi trả lời.'})
+                    continue
+                if not _text(assistant).strip():  # stop mà không có nội dung không phải câu trả lời
+                    trace.append({'event': 'validation_empty_answer', 'step': step})
+                    if empty_reminded or step == max_steps:
+                        return finish('error', error='Model dừng mà không đưa ra câu trả lời (nội dung rỗng).')
+                    empty_reminded = True
+                    messages.append({'role': 'user', 'content':
+                        'Bạn chưa đưa ra câu trả lời. Hãy trả lời câu hỏi dựa trên dữ liệu tool đã lấy, '
+                        'kèm URL nguồn nếu có.'})
                     continue
                 if failed and not failure_reminded and step < max_steps:  # nhắc đúng một lần
                     failure_reminded = True
