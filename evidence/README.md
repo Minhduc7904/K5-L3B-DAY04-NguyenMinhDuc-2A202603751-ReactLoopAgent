@@ -31,3 +31,12 @@ Vòng 2 cho thấy chỉ dùng prompt thì H1 vẫn không ổn định, nên co
 | `h6_prompt_v1.json` | H6 | 98 | Model chép sai ID thành `xr3myzjms51`, nhận `INCIDENT_NOT_FOUND`, kết luận sai; judge vẫn cho 98 |
 | `h6_prompt_v2.json` | H6 | 95 | Lỗi chép sai ID lặp lại; căn cứ để thêm `did_you_mean` |
 | `bonus_baseline_before_changes.json` | B1–B10 | 83,0 (9 case) | Bonus với `agent.py` chưa sửa gì cho bonus; B5 chưa chấm (provider timeout), B3 = B6 = B10 = 50 |
+
+## Vòng 3 (sau chấm độc lập 91,3)
+
+| File | Mã | Kết quả | Ý nghĩa |
+|---|---|---|---|
+| `round3/eval_bonus_round3.json` | commit `bda9a12` | 99,3 (14,89/15) | Lần chạy bonus trước khi đòi URL nguồn từng provider; chấm độc lập thấy B10 chỉ có URL Vercel |
+| `round3/repeat_B3_*.json`, `round3/repeat_B10_*.json` | commit `bda9a12` | B3: 100 x3; B10: 97, 98, 94 | Lặp cùng thời điểm đó |
+
+Các file `repeat_B3_*.json`, `repeat_B10_*.json` và `eval_bonus.json` ở thư mục gốc là lần chạy với mã commit `c4b231c` (cổng công bố đòi URL `source`).

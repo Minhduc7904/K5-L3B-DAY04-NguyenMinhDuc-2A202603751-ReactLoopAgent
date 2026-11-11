@@ -27,7 +27,7 @@
       "judge_model": "gpt-4.1-mini",
       "result": {
         "status": "completed",
-        "answer": "Trạng thái hiện tại của Vercel đang là \"All Systems Operational\" (Tất cả hệ thống hoạt động bình thường).\n\nCó một số sự cố lịch sử đã được ghi nhận và đều đã được giải quyết, ví dụ như:\n- \"Build delays and degraded Vercel Dashboard performance\" (trễ xây dựng và giảm hiệu năng Dashboard) với mã id: w661l7k3kf4p, cập nhật lần cuối vào ngày 2026-11-05.\n- \"Delays in Logs and Observability data\" (trễ trong dữ liệu logs và quan sát) update lần cuối ngày 2026-10-23.\n- Và nhiều sự cố khác đã được resolved trước đó.\n\nTôi có gặp lỗi rate limit (429) khi lần đầu lấy dữ liệu, nhưng đã thử lại đúng 2 lần theo quy định và lấy được dữ liệu hiện tại.\n\nNguồn dữ liệu: https://www.vercel-status.com\nDữ liệu captured_at: 2026-11-10T14:45:50.457875+00:00",
+        "answer": "Trạng thái hiện tại của Vercel là \"All Systems Operational\" - tất cả các hệ thống hoạt động bình thường, không có sự cố đang diễn ra.\n\nCác sự cố gần đây (đã được giải quyết) bao gồm:\n- Build delays and degraded Vercel Dashboard performance (Kéo dài build và giảm hiệu năng Dashboard) đã được giải quyết vào 2026-11-05.\n- Delays in Logs and Observability data (Chậm trễ trong Logs và dữ liệu quan sát) đã giải quyết vào 2026-10-23.\n- Nhiều sự cố khác cũng đã được giải quyết trong tháng 9 và tháng 10 năm 2026.\n\nTôi gặp rate limit ở lần gọi đầu tiên và đã thử lại 2 lần, lần thứ 2 lấy được dữ liệu thành công.\n\nDữ liệu được lấy từ trang trạng thái Vercel: https://www.vercel-status.com\nThời điểm dữ liệu chụp (captured_at): 2026-11-10T14:45:50.457875+00:00",
         "trace": [
           {
             "event": "model",
@@ -135,9 +135,9 @@
         ],
         "usage": [
           {
-            "prompt_tokens": 718,
+            "prompt_tokens": 753,
             "completion_tokens": 12,
-            "total_tokens": 730,
+            "total_tokens": 765,
             "prompt_tokens_details": {
               "cached_tokens": 0,
               "audio_tokens": 0
@@ -150,9 +150,9 @@
             }
           },
           {
-            "prompt_tokens": 815,
+            "prompt_tokens": 850,
             "completion_tokens": 12,
-            "total_tokens": 827,
+            "total_tokens": 862,
             "prompt_tokens_details": {
               "cached_tokens": 0,
               "audio_tokens": 0
@@ -165,9 +165,9 @@
             }
           },
           {
-            "prompt_tokens": 1385,
-            "completion_tokens": 222,
-            "total_tokens": 1607,
+            "prompt_tokens": 1420,
+            "completion_tokens": 226,
+            "total_tokens": 1646,
             "prompt_tokens_details": {
               "cached_tokens": 1280,
               "audio_tokens": 0
@@ -191,8 +191,8 @@
           "boundaries": 15
         },
         "status": "scored",
-        "reason": "Câu trả lời mô tả đúng quy trình lấy trạng thái Vercel gồm gặp lỗi rate limit 429 lần đầu, thử lại thành công với trạng thái 'All Systems Operational' đúng như expected. Câu trả lời cung cấp thông tin timestamp và nguồn dữ liệu từ vercel-status.com, đồng thời không coi 429 là sự cố outage, phù hợp với yêu cầu. Ngoài ra, câu trả lời còn liệt kê các sự cố đã được giải quyết trong quá khứ, bổ sung thông tin hữu ích nhưng không yêu cầu. Trả lời đúng giới hạn và xử lý tình huống rate limit theo quy định.",
-        "improvement": "Có thể rút ngắn phần liệt kê sự cố lịch sử không cần thiết để tập trung vào kết quả chính và timestamp, nguồn dữ liệu.",
+        "reason": "Câu trả lời đúng với yêu cầu và expected, mô tả chính xác tình trạng rate limit (429) lần đầu và thành công lần sau với trạng thái 'All Systems Operational'. Có nêu timestamp và nguồn, không nhầm lẫn 429 với sự cố. Cung cấp đầy đủ thông tin sự cố cũ đã giải quyết, phù hợp với trace.",
+        "improvement": "Có thể thêm mô tả ngắn về cách xử lý khi gặp rate limit hoặc đề xuất thời gian chờ tối ưu giữa các lần thử để rõ ràng hơn.",
         "mechanical": {
           "violations": [],
           "score_cap": 100,
@@ -200,9 +200,9 @@
           "tool_steps": 2
         },
         "judge_usage": {
-          "prompt_tokens": 1474,
-          "completion_tokens": 190,
-          "total_tokens": 1664,
+          "prompt_tokens": 1478,
+          "completion_tokens": 140,
+          "total_tokens": 1618,
           "prompt_tokens_details": {
             "cached_tokens": 0,
             "audio_tokens": 0

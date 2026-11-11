@@ -55,7 +55,7 @@ Giới hạn trung thực: ở các lần chạy mã cuối, model tự theo li�
 Mỗi mục kèm lý do. Đây không phải cải tiến chính; chúng giảm rủi ro hoặc sửa lỗi tôi tìm thấy.
 
 1. **Sửa crash (commit `1f601f0`).** Khóa ngân sách retry dùng `provider` thô từ model; list/dict gây `TypeError: unhashable`. Chỉ nhận chuỗi.
-2. **Chuẩn hóa response và kết quả tool (`ff35be0`).** Response/message/calls/id/name sai hình dạng thì trả `error` với event `malformed_response`, không crash; kết quả tool không phải object hoặc không serialize được thì thành observation lỗi; các field `incidents`, `updates`, `url`, `error` sai kiểu không gây `TypeError`. Script fuzz 4000 lượt: bản trước các sửa này crash 1354 lần, bản mới 0 lần (đối chiếu `bce4486`).
+2. **Chuẩn hóa response và kết quả tool (`ff35be0`).** Response/message/calls/id/name sai hình dạng thì trả `error` với event `malformed_response`, không crash; kết quả tool không phải object hoặc không serialize được thì thành observation lỗi; các field `incidents`, `updates`, `url`, `error` sai kiểu không gây `TypeError`. Script `tests/fuzz_agent.py` (4000 lượt, seed cố định, chạy offline): bản `bce4486` crash khoảng 1350 lần, bản mới 0 lần; chạy `python tests/fuzz_agent.py` hoặc `python tests/fuzz_agent.py <thư mục có agent.py cũ>`.
 3. **Câu trả lời rỗng và `retry_after` (`f458e89`).** `stop` mà không có nội dung: nhắc một lần rồi `error` thay vì báo `completed`. `retry_after` là nan, âm hoặc không hợp lệ không đi vào `time.sleep`; inf hoặc lớn hơn 5 giây thì dừng thử lại.
 4. **`did_you_mean` và `hint` cho `INCIDENT_NOT_FOUND`.** Ghi nhớ các ID đã thấy; ID gần giống (difflib, ngưỡng 0,8) thì gợi ý (nhắm lỗi chép sai `xr3myzjms51` ở H6); ID chưa từng xuất hiện trong câu hỏi hay tool result thì thêm `hint` "đừng tự đặt ID, lấy từ get_status" (nhắm A7).
 5. **Cổng "provider lỗi chưa giải quyết" (`validation_unresolved_failure`).** Provider có tool lỗi mà chưa gọi lại thành công thì nhắc một lần không kết luận trạng thái của họ (nhắm H7, E6, A3).
@@ -70,11 +70,11 @@ Mỗi mục kèm lý do. Đây không phải cải tiến chính; chúng giảm 
 | `validation_unresolved_failure` | E6, A3, H7 (bài chính), X3 (held-out) | |
 | `validation_missing_source` | A7 | |
 | `validation_unfollowed_link` | B2 (bonus) | bài chính |
-| `validation_missing_disclosure` | B2 (bonus); B4 ở vòng 1 | |
-| `validation_pending_retry` | B10 (bonus) | |
+| `validation_missing_disclosure` | B2, B6 (bonus, lần chạy mã cuối); B4 ở vòng 1 | |
+| `validation_pending_retry` | B10 (bonus, vòng trước đó; lần chạy mã cuối không kích hoạt) | |
 | `did_you_mean`, `hint` ID tự đặt, `validation_empty_answer`, `malformed_response`, `retry_budget_exhausted`, `disclosure_fallback` | | có (không xuất hiện trong eval) |
 
-Số test offline hiện tại: **86 test bài chính và 3 test bonus, đều pass** (thêm `tests/test_retry.py`, `tests/test_hardening.py`).
+Số test offline hiện tại: **88 test bài chính và 3 test bonus, đều pass** (thêm `tests/test_retry.py`, `tests/test_hardening.py`).
 
 ## 4. So sánh các lần chạy
 
@@ -108,14 +108,14 @@ Mã khác nhau, cùng bộ 22 case: 92,14 (trước), 95,86, 98,82, 98,32 (vòng
 | E2 | 98, 100, 98, 100 | 99,0 | cả 4 lần mở `wp49bp8bqo6c` |
 | E3 | 100, 100, 100, 100 | 100 | |
 | E5 | 100, 100, 90, 95 | 96,3 | lần 90: judge cho rằng khẳng định "hoạt động bình thường vì components rỗng" quá mức |
-| B3 (bonus) | 100, 100, 100, 100 | 100 | cả 4 câu trả lời nêu 429 và timestamp |
-| B10 (bonus) | 95, 97, 98, 94 | 96,0 | cả 4 nêu timestamp từng provider và 429 |
+| B3 (bonus) | 100, 100, 100, 100 | 100 | mã cuối (sau cổng URL nguồn); đều có timestamp và nhắc rate limit/429; xem mục 5 về cách đếm số lần thử lại |
+| B10 (bonus) | 99, 100, 100, 96 | 98,8 | mã cuối; đủ URL và timestamp từng provider |
 
 Sửa phân tích trước đó: tôi từng xếp **A7 94→90** vào "dao động". Trace lần chạy đó cho thấy model **bịa ID `"phoenix"`** rồi nói "ID bạn cung cấp", tức là lỗi thật. Ở mã cuối, cả bốn lần A7 đều gọi đúng `c60k3g4vsoc1`, hint "đừng tự đặt ID" không cần kích hoạt; không chứng minh được hint có tác dụng, chỉ có thể nói lỗi không còn xuất hiện trong 4 mẫu.
 
 ### 4.3 Bộ held-out (`heldout/`)
 
-6 câu cùng loại tình huống với eval chính nhưng diễn đạt khác và dùng ID khác (xác nhận sai tiền đề, timeout dưới áp lực, hỏi không kèm ID, theo liên kết `qpfv5p86dmrl`→`djlmxz2zd0j7`, tóm tắt một incident).
+6 câu cùng loại tình huống với eval chính nhưng diễn đạt khác (xác nhận sai tiền đề, timeout dưới áp lực, hỏi không kèm ID, theo liên kết `qpfv5p86dmrl`→`djlmxz2zd0j7`, tóm tắt một incident). **Không hoàn toàn độc lập:** chỉ X5 và X6 dùng incident chưa có trong 22 case eval; X1 dùng lại `c60k3g4vsoc1` (cũng ở E3/A7), X4 nhắc `yaa0witbl2me` (H1/A8), X2 và X3 là biến thể của H2 và H7.
 
 | Lần | Điểm | Ghi chú |
 |---|---|---|
@@ -128,30 +128,30 @@ Giới hạn: tôi đã dùng kết quả X1 để chỉnh prompt một lần, n
 ## 5. Giới hạn
 
 - **Điểm judge là ước lượng.** Judge dùng cùng model với agent nên có thể thiên lệch. Ví dụ lần 1: H7 được chấm 75 dù judge tự ghi agent "không tuân thủ expected"; A5 được chấm 88 dù câu trả lời đổi năm 2026 thành 2025. H1 có judge cho 96 nhưng bị trần 60 bởi kiểm tra bằng code, nên điểm cuối phụ thuộc nhiều vào `grade.mechanical`.
-- **Judge chấm bonus sai ở lần chạy trước.** Chấm độc lập phát hiện B3 được 100 dù câu trả lời không nhắc 429 hay thử lại và không có timestamp; B10 thiếu timestamp từng provider. Tôi sửa bằng cổng công bố (mục 6) và **kiểm tra bằng mắt** câu trả lời mới (B3 và B10 trong 4 lần chạy đều có 429 và timestamp), không dựa vào điểm judge.
+- **Judge chấm bonus quá tay.** Chấm độc lập phát hiện ở lần chạy bonus trước: B3 được 100 dù câu trả lời nói "thử lại 2 lần" trong khi trace chỉ có 1 lần thử lại (2 lần gọi Vercel); B10 tự nhận có link nguồn cho từng provider nhưng chỉ có URL Vercel. Tôi đã sửa phần URL bằng cổng công bố (đòi URL `source` của từng provider đã đọc), và kiểm tra bằng mắt 4 câu trả lời B10 mới: đủ URL, ngày `captured_at` từng provider và có nhắc rate limit. **Chưa sửa được hẳn lỗi số lần thử lại:** trong 4 câu trả lời B3 mới, có câu vẫn viết "thử lại 2 lần" (có thể hiểu là 2 lần gọi) dù chỉ có 1 lần thử lại; judge không phát hiện và code không kiểm tra số lần này.
 - **Snapshot cố định.** Dữ liệu chụp lúc 2026-11-09T03:50:47Z và chỉ gồm 50 incident gần nhất; tìm theo chuỗi gần đúng nên không tìm thấy không chứng minh incident không tồn tại.
 - **Mẫu nhỏ.** Mỗi case tối đa 4 lần chạy; model có tính ngẫu nhiên. Lỗi hiếm (ví dụ chép sai ID) có thể không xuất hiện trong mẫu.
 - **Điểm cao không bằng nội dung đúng.** Ở lần chạy thử, H6 đạt 98 và 95 dù chép sai ID và kết luận sai; kiểm tra bằng code chỉ đếm số step, còn judge cùng model không phát hiện.
 - **Các quy tắc prompt và cổng chỉ nhắc một lần**, model vẫn có thể viết lại sai. Kiểm tra nguồn chỉ kiểm tra sự hiện diện của một URL, không chứng minh mọi nhận định có nguồn. Cổng theo liên kết chỉ bắt URL dạng `.../incidents/<id>`.
-- **Cổng nhắc là "cố gắng tốt nhất".** Nếu provider lỗi sau lời nhắc bổ sung (công bố, theo liên kết), `run_agent` giữ câu trả lời trước và ghi `disclosure_fallback`; cần vì `bonus/test_agent.py` dùng provider giả không có thêm câu trả lời.
+- **Cổng nhắc là "cố gắng tốt nhất".** Nếu provider lỗi sau lời nhắc bổ sung (công bố, theo liên kết), `run_agent` giữ câu trả lời trước, ghi `disclosure_fallback` và thêm trường `warning` (vẫn `completed`); cần vì `bonus/test_agent.py` dùng provider giả không có thêm câu trả lời. Các lỗi khác sau lời nhắc (output bị cắt, response hỏng, `finish` lạ) vẫn trả `error`, không bị che.
 - **Lịch sử commit.** Các commit CP1–CP6 được tạo lại theo checkpoint sau khi đã làm xong, nên thời gian commit không phản ánh thời điểm thực tế hoàn thành từng checkpoint.
 
 ## 6. Bonus: 5 nhà cung cấp, retry, phân trang, context
 
-**Kết quả** (`eval_bonus.json`, 10/10 case được chấm): **99,3/100**, `bonus_points_0_15` = **14,89**. Cùng cấu hình: `gpt-4.1-mini` cho agent và judge, `max_steps` = 16, dataset `bonus`. 32 model calls, 65.834 token của agent và 29.096 token của judge. Chỉ B10 (95) và B2 (98) dưới 100. Các lần chạy bonus trước: 99,4 (mã chưa có cổng công bố), 98,2 (vòng 1).
+**Kết quả** (`eval_bonus.json`, 10/10 case được chấm): **99,9/100**, `bonus_points_0_15` = **14,98**. Cùng cấu hình: `gpt-4.1-mini` cho agent và judge, `max_steps` = 16, dataset `bonus`. 32 model calls, 72.624 token của agent và 29.122 token của judge. Chỉ B10 (99) dưới 100. Các lần chạy bonus trước: 99,4 (mã chưa có cổng công bố), 98,2 (vòng 1), 99,3 (trước khi đòi URL nguồn, `evidence/round3/`). Điểm cao hơn một phần vì câu trả lời có thêm URL từng provider; điểm judge vẫn là ước lượng.
 
 **Baseline trước khi sửa** (`agent.py` bài chính chưa sửa gì): 9/10 case được chấm, trung bình 83,0. B5 chưa chấm (provider `TimeoutError`, không phải lỗi agent); B3 = B10 = 50 (gặp 429 mà không thử lại; code chấm trần 50 vì cần ít nhất 2 lần gọi `get_vercel_status`); B6 = 50 (không gọi `get_incident_details`).
 
 **Thay đổi trong `agent.py`:**
 - **Retry 429 có ngân sách.** Model vẫn thấy observation 429 (`bonus/test_agent.py` yêu cầu). Code thêm `attempts`, `retries_remaining`, chờ theo `Retry-After` (tối đa 5 giây), đếm 429 theo (tool, provider) trong cả run; sau 3 lần thì không gọi tool nữa mà trả `retry_exhausted: true` (event `retry_budget_exhausted`).
 - **Cổng nhắc thử lại** (`validation_pending_retry`) khi model định kết thúc mà còn lượt thử lại.
-- **Cổng công bố** (`validation_missing_disclosure`, chỉ bonus): ghi `captured_at` của từng provider đã đọc; nếu câu trả lời cuối thiếu ngày của `captured_at` hoặc không nhắc 429/thử lại dù từng gặp thì nhắc một lần. Mục đích: sửa lỗi B3/B10 do chấm độc lập phát hiện.
+- **Cổng công bố** (`validation_missing_disclosure`, chỉ bonus): ghi `captured_at` và `source` của từng provider đã đọc; nếu câu trả lời cuối thiếu ngày của `captured_at`, thiếu URL `source` hoặc không nhắc 429/thử lại dù từng gặp thì nhắc một lần. Mục đích: sửa lỗi B3/B10 do chấm độc lập phát hiện.
 - **`BONUS_RULES`.** Nối vào prompt chỉ khi bộ tools có `system_prompt` riêng nên bài chính không bị ảnh hưởng: gọi `get_incident_details` khi cần chi tiết; đọc tiếp theo `next_offset`; gọi lại ngay khi `retries_remaining > 0`; thiếu tool cho provider thì nói thiếu dữ liệu; nêu `captured_at` từng provider và việc đã gặp 429.
 
-**Hành vi quan sát được trong trace:** B3 gọi Vercel hai lần (429 rồi thành công) và nêu 429, timestamp; B4 gọi Vercel đúng 3 lần rồi dừng, báo không biết trạng thái Vercel, và được cổng công bố nhắc bổ sung `captured_at` (vòng 1); B10 thử lại sau 429 (có lần cổng `validation_pending_retry` nhắc); B2 đọc nhiều trang timeline, cổng theo liên kết và công bố đều kích hoạt.
+**Hành vi quan sát được trong trace:** B3 gọi Vercel hai lần (429 rồi thành công) và nêu 429, timestamp; B4 gọi Vercel đúng 3 lần rồi dừng, báo không biết trạng thái Vercel, và được cổng công bố nhắc bổ sung `captured_at` (vòng 1); B10 gặp 429 ở Vercel rồi gọi lại thành công (2 lần gọi); B2 đọc nhiều trang timeline, cổng theo liên kết và cổng công bố đều kích hoạt; B6 bị cổng công bố nhắc bổ sung `captured_at` của npm và Vercel.
 
 **Giới hạn còn lại:**
 - Ngân sách 3 lần (`retry_budget_exhausted`) không được kích hoạt trong eval vì model tự dừng đúng; chỉ có unit test.
 - 429 trong eval là giả lập (`retry_after_seconds` = 0); logic chờ theo `Retry-After` thật chỉ được kiểm tra bằng unit test với `time.sleep` giả.
 - Cổng nguồn chỉ kiểm tra URL của `get_incident_details`; status tool chỉ trả trang chủ.
-- B2 bị cổng nhắc hai lần (theo liên kết và công bố) nên tốn thêm model calls.
+- B2 bị cổng nhắc hai lần (theo liên kết và công bố) nên tốn thêm model calls; token của agent ở bonus tăng từ 65.834 lên 72.624 (+10%) so với lần chạy trước cổng URL nguồn.

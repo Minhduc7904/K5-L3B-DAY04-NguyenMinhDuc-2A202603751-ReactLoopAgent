@@ -27,7 +27,7 @@
       "judge_model": "gpt-4.1-mini",
       "result": {
         "status": "completed",
-        "answer": "Trạng thái Vercel hiện tại là \"All Systems Operational\" (Tất cả hệ thống hoạt động bình thường), không có sự cố hoạt động hiện tại.\n\nĐã từng có các sự cố gần đây nhưng đều đã được giải quyết, ví dụ:\n- \"Build delays and degraded Vercel Dashboard performance\" (đã giải quyết ngày 2026-11-05)\n- \"Delays in Logs and Observability data\" (đã giải quyết ngày 2026-10-23)\n- Nhiều sự cố khác cũng đã được khắc phục.\n\nTôi đã gặp giới hạn rate limit (429) khi gọi API lấy dữ liệu trạng thái Vercel lần đầu, đã thử lại 2 lần theo yêu cầu, lần thứ 2 thì thành công.\n\nNguồn: https://www.vercel-status.com\nDữ liệu trạng thái chụp lúc: 2026-11-10T14:45:50.457875+00:00",
+        "answer": "Trạng thái hiện tại của Vercel là \"All Systems Operational\" (Tất cả hệ thống hoạt động bình thường).\n\nVercel có 8 sự cố gần đây đã được giải quyết, ví dụ:\n- \"Build delays and degraded Vercel Dashboard performance\" (Đã giải quyết, cập nhật lần cuối ngày 2026-11-05).\n- \"Delays in Logs and Observability data\" (Đã giải quyết, cập nhật lần cuối ngày 2026-10-23).\n\nTôi đã gặp rate limit (429) khi gọi lần đầu, lần gọi lại sau thì thành công, không cần thử lại thêm nữa.\n\nNguồn: https://www.vercel-status.com\nThời điểm capture trạng thái: 2026-11-10T14:45:50.457875+00:00",
         "trace": [
           {
             "event": "model",
@@ -135,9 +135,9 @@
         ],
         "usage": [
           {
-            "prompt_tokens": 718,
+            "prompt_tokens": 753,
             "completion_tokens": 12,
-            "total_tokens": 730,
+            "total_tokens": 765,
             "prompt_tokens_details": {
               "cached_tokens": 0,
               "audio_tokens": 0
@@ -150,9 +150,9 @@
             }
           },
           {
-            "prompt_tokens": 815,
+            "prompt_tokens": 850,
             "completion_tokens": 12,
-            "total_tokens": 827,
+            "total_tokens": 862,
             "prompt_tokens_details": {
               "cached_tokens": 0,
               "audio_tokens": 0
@@ -165,9 +165,9 @@
             }
           },
           {
-            "prompt_tokens": 1385,
-            "completion_tokens": 203,
-            "total_tokens": 1588,
+            "prompt_tokens": 1420,
+            "completion_tokens": 173,
+            "total_tokens": 1593,
             "prompt_tokens_details": {
               "cached_tokens": 1280,
               "audio_tokens": 0
@@ -191,8 +191,8 @@
           "boundaries": 15
         },
         "status": "scored",
-        "reason": "Câu trả lời chính xác theo yêu cầu: lần đầu gọi API trả về 429 (rate limit), lần sau thành công với trạng thái 'All Systems Operational' và cung cấp đầy đủ timestamp, nguồn, các sự cố đã giải quyết. Không khẳng định quá mức và không coi 429 là sự cố outage.",
-        "improvement": "Nêu rõ thời gian cụ thể từng lần gọi API (ví dụ gọi lần đầu lúc nào, lần sau lúc nào) để minh bạch hơn.",
+        "reason": "Câu trả lời đúng yêu cầu, phản ánh chính xác trạng thái Vercel hiện tại theo snapshot, có gặp lỗi rate limit 429 lần đầu rồi retry thành công như trong trace; nêu rõ nguồn và timestamp. Thông tin chi tiết về các sự cố gần đây cũng được cung cấp đầy đủ.",
+        "improvement": "Có thể ghi rõ số lần thử lại và giới hạn retry để minh bạch hơn.",
         "mechanical": {
           "violations": [],
           "score_cap": 100,
@@ -200,9 +200,9 @@
           "tool_steps": 2
         },
         "judge_usage": {
-          "prompt_tokens": 1455,
-          "completion_tokens": 126,
-          "total_tokens": 1581,
+          "prompt_tokens": 1424,
+          "completion_tokens": 122,
+          "total_tokens": 1546,
           "prompt_tokens_details": {
             "cached_tokens": 0,
             "audio_tokens": 0
