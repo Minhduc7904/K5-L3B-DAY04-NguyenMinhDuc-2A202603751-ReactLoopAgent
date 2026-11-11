@@ -8,6 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / 'evals'))
 from agent import run_agent
+from bonus.tools import BonusTools
 from scenarios import ScenarioTools
 from status_tools import StatusTools
 from test_lab import FakeProvider, tool_call, final
@@ -104,6 +105,28 @@ class UnresolvedFailureGateTests(unittest.TestCase):
         result = run_agent('x', fake, ScenarioTools('cloudflare_timeout'), max_steps=2)
         self.assertFalse(any(t['event'] == 'validation_unresolved_failure' for t in result['trace']))
         self.assertEqual(result['status'], 'completed')
+
+
+class TraceShowsWhatModelSawTests(unittest.TestCase):
+    def test_trace_result_includes_retry_metadata(self):
+        fake = FakeProvider([tool_call('a', 'get_vercel_status', '{}'), final('Tạm thời chưa biết.')])
+        result = run_agent('x', fake, BonusTools('snapshot', 'rate_limit_always'), max_steps=2)
+        tool_event = next(t for t in result['trace'] if t['event'] == 'tool')
+        seen = json.loads(fake.histories[1][-1]['content'])
+        self.assertEqual(tool_event['result'], seen)
+        self.assertEqual(tool_event['result']['retries_remaining'], 2)
+
+    def test_trace_result_includes_did_you_mean(self):
+        fake = FakeProvider([
+            tool_call('a', 'get_incident_details', '{"provider":"github","incident_id":"h02n9572mx9y"}'),
+            tool_call('b', 'get_incident_details', '{"provider":"github","incident_id":"xr3myzjms51"}'),
+            final('Xong https://stspg.io/7pwv28hvkmz8')])
+        result = run_agent('x', fake, StatusTools(), max_steps=5)
+        miss = [t for t in result['trace'] if t['event'] == 'tool'][1]
+        self.assertEqual(miss['result']['did_you_mean'], 'xr3myzj7ms51')
+        for event in result['trace']:
+            if event['event'] == 'tool':
+                self.assertTrue({'step', 'name', 'arguments', 'result'} <= set(event))
 
 
 if __name__ == '__main__':

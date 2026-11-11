@@ -40,13 +40,14 @@ BONUS_RULES = '''Quy tắc bổ sung:
 
 def _parse_arguments(raw):
     """JSON string -> (dict, None) hoặc (None, lỗi để trả lại cho model)."""
-    try: 
+    try:
         args = json.loads(raw) if raw else {}
     except (TypeError, ValueError) as exc:
         return None, f'Arguments không phải JSON hợp lệ: {str(exc)[:150]}'
     if not isinstance(args, dict):
         return None, 'Arguments phải là một JSON object.'
     return args, None
+
 
 def _run_tool(tools, name, raw_arguments):
     """Luôn trả dict (observation); không bao giờ raise."""
@@ -101,12 +102,19 @@ def _suggest_incident_id(observed, args, provider_arg):
     return matches[0] if matches else None
 
 
+def _traced(trace, step, call, observation):
+    """Ghi trace đúng thứ model sẽ thấy (đã có attempts, retries_remaining, did_you_mean...)."""
+    trace.append({'event': 'tool', 'step': step, 'name': call['name'],
+                  'arguments': call['arguments'], 'result': observation})
+    return observation
+
+
 def _call_tool(tools, call, step, trace, rate_limited, pending, observed, failed):
     """Gọi tool một lần; model vẫn thấy mọi lỗi, code chỉ ép ngân sách thử lại khi gặp 429.
 
     rate_limited đếm số lần 429 theo (tool, provider) trong cả run để model không thể
     vòng qua giới hạn bằng cách gọi lại ở lượt sau. pending giữ các tool vừa bị 429
-    mà còn lượt thử lại.
+    mà còn lượt thử lại. observed lưu ID incident đã thấy; failed lưu provider đang lỗi.
     """
     args, _ = _parse_arguments(call['arguments'])
     provider_arg = args.get('provider') if args else None
@@ -118,8 +126,6 @@ def _call_tool(tools, call, step, trace, rate_limited, pending, observed, failed
         return {'ok': False, 'error': 'RATE_LIMITED', 'retry_exhausted': True,
                 'message': 'Đã hết số lần thử lại cho tool này; không gọi lại. Báo rõ chưa biết trạng thái.'}
     result = _run_tool(tools, call['name'], call['arguments'])
-    trace.append({'event': 'tool', 'step': step, 'name': call['name'],
-                  'arguments': call['arguments'], 'result': result})
     _remember_ids(observed, result, provider_arg)
     if isinstance(provider_arg, str) and isinstance(result, dict):
         if result.get('ok') is False and result.get('error') not in NOT_PROVIDER_FAILURE:
@@ -134,7 +140,7 @@ def _call_tool(tools, call, step, trace, rate_limited, pending, observed, failed
                                  'trong dữ liệu)? Hãy gọi lại với ID đó, chép chính xác từng ký tự.'}
     if not (isinstance(result, dict) and result.get('error') == 'RATE_LIMITED'):
         pending.pop(key, None)
-        return result
+        return _traced(trace, step, call, result)
     rate_limited[key] = rate_limited.get(key, 0) + 1
     delay = _retry_delay(result, rate_limited[key])
     remaining = MAX_RATE_LIMIT_ATTEMPTS - rate_limited[key] if delay is not None else 0
@@ -148,7 +154,7 @@ def _call_tool(tools, call, step, trace, rate_limited, pending, observed, failed
         out['retry_exhausted'] = True
         out['message'] = ('Bị rate limit và đã ngừng thử lại. Báo rõ chưa biết trạng thái '
                           'dịch vụ này; không coi 429 là outage.')
-    return out
+    return _traced(trace, step, call, out)
 
 
 def run_agent(question, provider, tools, max_steps=6):
