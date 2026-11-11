@@ -1,5 +1,7 @@
 """ReAct agent loop tự viết (không dùng framework) cho bài lab status agent."""
+import difflib
 import json
+import re
 import time
 
 from status_tools import SCHEMAS
@@ -60,7 +62,39 @@ def _retry_delay(result, attempts):
     return None if delay > MAX_RETRY_WAIT else max(delay, 0.0)
 
 
-def _call_tool(tools, call, step, trace, rate_limited, pending):
+_ID_IN_TEXT = re.compile(r'incidents/([a-z0-9]+)')
+
+
+def _remember_ids(observed, result, provider_arg):
+    """Ghi lại ID incident đã thấy trong tool result để gợi ý khi model chép sai ID."""
+    if not isinstance(result, dict):
+        return
+    provider = result.get('provider') if isinstance(result.get('provider'), str) else provider_arg
+    if not isinstance(provider, str):
+        return
+    ids = observed.setdefault(provider, set())
+    for incident in result.get('incidents') or []:
+        if isinstance(incident, dict) and isinstance(incident.get('id'), str):
+            ids.add(incident['id'])
+    if isinstance(result.get('id'), str):
+        ids.add(result['id'])
+    texts = [result.get('url')] + [u.get('body') for u in result.get('updates') or [] if isinstance(u, dict)]
+    for text in texts:
+        if isinstance(text, str):
+            ids.update(_ID_IN_TEXT.findall(text))
+
+
+def _suggest_incident_id(observed, args, provider_arg):
+    """ID đã thấy gần giống ID model vừa gõ (thường là chép sai một ký tự); None nếu không có."""
+    wanted = args.get('incident_id') if args else None
+    if not isinstance(wanted, str):
+        return None
+    pool = observed.get(provider_arg, set()) if isinstance(provider_arg, str) else set().union(*observed.values())
+    matches = difflib.get_close_matches(wanted, sorted(pool - {wanted}), n=1, cutoff=0.8)
+    return matches[0] if matches else None
+
+
+def _call_tool(tools, call, step, trace, rate_limited, pending, observed):
     """Gọi tool một lần; model vẫn thấy mọi lỗi, code chỉ ép ngân sách thử lại khi gặp 429.
 
     rate_limited đếm số lần 429 theo (tool, provider) trong cả run để model không thể
@@ -79,6 +113,13 @@ def _call_tool(tools, call, step, trace, rate_limited, pending):
     result = _run_tool(tools, call['name'], call['arguments'])
     trace.append({'event': 'tool', 'step': step, 'name': call['name'],
                   'arguments': call['arguments'], 'result': result})
+    _remember_ids(observed, result, provider_arg)
+    if isinstance(result, dict) and result.get('error') == 'INCIDENT_NOT_FOUND':
+        suggestion = _suggest_incident_id(observed, args, provider_arg)
+        if suggestion:
+            result = {**result, 'did_you_mean': suggestion,
+                      'message': f"Không tìm thấy ID này. Có phải bạn muốn dùng '{suggestion}' (ID đã thấy "
+                                 'trong dữ liệu)? Hãy gọi lại với ID đó, chép chính xác từng ký tự.'}
     if not (isinstance(result, dict) and result.get('error') == 'RATE_LIMITED'):
         pending.pop(key, None)
         return result
@@ -105,6 +146,7 @@ def run_agent(question, provider, tools, max_steps=6):
     system_prompt = SYSTEM_PROMPT if tool_prompt is None else tool_prompt + '\n' + BONUS_RULES
     rate_limited = {}  # (tool, provider) -> số lần bị 429
     pending = {}       # (tool, provider) -> tên tool vừa bị 429 và còn lượt thử lại
+    observed = {}      # provider -> các ID incident đã thấy trong tool result
     messages = [{'role': 'system', 'content': system_prompt},
                 {'role': 'user', 'content': question}]
     sources = []  # URL của các incident đã đọc thành công
@@ -162,7 +204,7 @@ def run_agent(question, provider, tools, max_steps=6):
             return finish('error', answer=assistant.get('content') or '', error=message)
 
         for call in calls:  # xử lý MỌI call trước khi gọi model tiếp
-            result = _call_tool(tools, call, step, trace, rate_limited, pending)
+            result = _call_tool(tools, call, step, trace, rate_limited, pending, observed)
             if (call['name'] == 'get_incident_details' and isinstance(result, dict)
                     and result.get('ok') and result.get('url') and result['url'] not in sources):
                 sources.append(result['url'])
