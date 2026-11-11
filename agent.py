@@ -55,9 +55,15 @@ def _run_tool(tools, name, raw_arguments):
     if problem:
         return {'ok': False, 'error': 'INVALID_ARGUMENTS', 'message': problem}
     try:
-        return tools.execute(name, args)
+        result = tools.execute(name, args)
     except Exception as exc:  # tool lỗi bất ngờ vẫn chỉ là observation
         return {'ok': False, 'error': type(exc).__name__, 'message': str(exc)[:200]}
+    if not isinstance(result, dict):
+        return {'ok': False, 'error': 'INVALID_TOOL_RESULT', 'message': 'Tool phải trả về một object.'}
+    try:  # ép về JSON thuần để trace và message gửi model luôn serialize được
+        return json.loads(json.dumps(result, ensure_ascii=False, default=str))
+    except (TypeError, ValueError, RecursionError):
+        return {'ok': False, 'error': 'UNSERIALIZABLE_RESULT', 'message': 'Kết quả tool không chuyển được sang JSON.'}
 
 
 def _retry_delay(result, attempts):
@@ -73,6 +79,10 @@ def _retry_delay(result, attempts):
 _ID_IN_TEXT = re.compile(r'incidents/([a-z0-9]+)')
 
 
+def _as_list(value):
+    return value if isinstance(value, list) else []
+
+
 def _remember_ids(observed, result, provider_arg):
     """Ghi lại ID incident đã thấy trong tool result để gợi ý khi model chép sai ID."""
     if not isinstance(result, dict):
@@ -81,12 +91,12 @@ def _remember_ids(observed, result, provider_arg):
     if not isinstance(provider, str):
         return
     ids = observed.setdefault(provider, set())
-    for incident in result.get('incidents') or []:
+    for incident in _as_list(result.get('incidents')):
         if isinstance(incident, dict) and isinstance(incident.get('id'), str):
             ids.add(incident['id'])
     if isinstance(result.get('id'), str):
         ids.add(result['id'])
-    texts = [result.get('url')] + [u.get('body') for u in result.get('updates') or [] if isinstance(u, dict)]
+    texts = [result.get('url')] + [u.get('body') for u in _as_list(result.get('updates')) if isinstance(u, dict)]
     for text in texts:
         if isinstance(text, str):
             ids.update(_ID_IN_TEXT.findall(text))
@@ -100,6 +110,41 @@ def _suggest_incident_id(observed, args, provider_arg):
     pool = observed.get(provider_arg, set()) if isinstance(provider_arg, str) else set().union(*observed.values())
     matches = difflib.get_close_matches(wanted, sorted(pool - {wanted}), n=1, cutoff=0.8)
     return matches[0] if matches else None
+
+
+def _normalize_response(response):
+    """Kiểm tra hình dạng response của provider -> (response chuẩn, None) hoặc (None, lỗi)."""
+    if not isinstance(response, dict):
+        return None, 'Provider trả response không phải object.'
+    if not isinstance(response.get('message'), dict):
+        return None, 'Response thiếu message (object).'
+    raw_calls = response.get('calls') or []
+    if not isinstance(raw_calls, list):
+        return None, 'Response có calls không phải danh sách.'
+    calls = []
+    for raw in raw_calls:
+        if not isinstance(raw, dict):
+            return None, 'Một tool call không phải object.'
+        call_id, name, arguments = raw.get('id'), raw.get('name'), raw.get('arguments')
+        if not isinstance(call_id, str) or not call_id or not isinstance(name, str) or not name:
+            return None, 'Tool call thiếu id hoặc name (chuỗi không rỗng).'
+        if arguments is None:
+            arguments = ''
+        elif not isinstance(arguments, str):  # dict/list/số -> JSON string, để _parse_arguments quyết định hợp lệ
+            try:
+                arguments = json.dumps(arguments, ensure_ascii=False)
+            except (TypeError, ValueError):
+                return None, 'Arguments của tool call không chuyển được sang JSON.'
+        calls.append({'id': call_id, 'name': name, 'arguments': arguments})
+    usage = response.get('usage')
+    return {'message': response['message'], 'calls': calls, 'finish': response.get('finish'),
+            'usage': usage if isinstance(usage, dict) else {}}, None
+
+
+def _text(message):
+    """Nội dung văn bản của message assistant; không phải chuỗi thì coi là rỗng."""
+    content = message.get('content')
+    return content if isinstance(content, str) else ''
 
 
 def _traced(trace, step, call, observation):
@@ -127,18 +172,19 @@ def _call_tool(tools, call, step, trace, rate_limited, pending, observed, failed
                 'message': 'Đã hết số lần thử lại cho tool này; không gọi lại. Báo rõ chưa biết trạng thái.'}
     result = _run_tool(tools, call['name'], call['arguments'])
     _remember_ids(observed, result, provider_arg)
-    if isinstance(provider_arg, str) and isinstance(result, dict):
-        if result.get('ok') is False and result.get('error') not in NOT_PROVIDER_FAILURE:
-            failed[provider_arg] = result.get('error')  # chưa lấy được dữ liệu của provider này
+    error = result.get('error') if isinstance(result.get('error'), str) else None
+    if isinstance(provider_arg, str):
+        if result.get('ok') is False and error not in NOT_PROVIDER_FAILURE:
+            failed[provider_arg] = error or 'ERROR'  # chưa lấy được dữ liệu của provider này
         elif result.get('ok') is not False and 'error' not in result:
             failed.pop(provider_arg, None)
-    if isinstance(result, dict) and result.get('error') == 'INCIDENT_NOT_FOUND':
+    if error == 'INCIDENT_NOT_FOUND':
         suggestion = _suggest_incident_id(observed, args, provider_arg)
         if suggestion:
             result = {**result, 'did_you_mean': suggestion,
                       'message': f"Không tìm thấy ID này. Có phải bạn muốn dùng '{suggestion}' (ID đã thấy "
                                  'trong dữ liệu)? Hãy gọi lại với ID đó, chép chính xác từng ký tự.'}
-    if not (isinstance(result, dict) and result.get('error') == 'RATE_LIMITED'):
+    if error != 'RATE_LIMITED':
         pending.pop(key, None)
         return _traced(trace, step, call, result)
     rate_limited[key] = rate_limited.get(key, 0) + 1
@@ -180,22 +226,26 @@ def run_agent(question, provider, tools, max_steps=6):
 
     for step in range(1, max_steps + 1):
         try:
-            response = provider.complete(messages, schemas)
+            raw_response = provider.complete(messages, schemas)
         except Exception as exc:  # lỗi provider kết thúc run, không báo completed
             message = f'{type(exc).__name__}: {str(exc)[:200]}'
             trace.append({'event': 'provider_error', 'step': step, 'error': message})
             return finish('error', error=message)
+        response, problem = _normalize_response(raw_response)
+        if problem:  # response hỏng không được báo completed
+            trace.append({'event': 'malformed_response', 'step': step, 'error': problem})
+            return finish('error', error=problem)
 
-        usage.append(response.get('usage') or {})
-        reason = response.get('finish')
-        calls = response.get('calls') or []
+        usage.append(response['usage'])
+        reason = response['finish']
+        calls = response['calls']
         assistant = response['message']
         trace.append({'event': 'model', 'step': step, 'finish': reason, 'tool_calls': len(calls)})
 
         if reason == 'length':  # bị cắt output: cả answer lẫn arguments đều không đáng tin
             message = 'Model bị cắt output (finish=length).'
             trace.append({'event': 'truncated', 'step': step})
-            return finish('error', answer=assistant.get('content') or '', error=message)
+            return finish('error', answer=_text(assistant), error=message)
 
         messages.append(assistant)  # nguyên vẹn, trước mọi tool result
 
@@ -218,7 +268,7 @@ def run_agent(question, provider, tools, max_steps=6):
                         'yêu cầu. Hãy viết lại: nêu rõ chưa biết trạng thái của họ và vẫn trình bày phần '
                         'đã kiểm tra được kèm nguồn.'})
                     continue
-                answer = assistant.get('content') or ''
+                answer = _text(assistant)
                 if sources and not any(url in answer for url in sources):
                     trace.append({'event': 'validation_missing_source', 'step': step, 'sources': list(sources)})
                     if step == max_steps:  # hết lượt, không còn cơ hội sửa
@@ -231,12 +281,12 @@ def run_agent(question, provider, tools, max_steps=6):
                 return finish('completed', answer=answer)
             message = f'Model dừng với lý do không hỗ trợ: {reason!r}.'
             trace.append({'event': 'unexpected_finish', 'step': step, 'finish': reason})
-            return finish('error', answer=assistant.get('content') or '', error=message)
+            return finish('error', answer=_text(assistant), error=message)
 
         for call in calls:  # xử lý MỌI call trước khi gọi model tiếp
             result = _call_tool(tools, call, step, trace, rate_limited, pending, observed, failed)
-            if (call['name'] == 'get_incident_details' and isinstance(result, dict)
-                    and result.get('ok') and result.get('url') and result['url'] not in sources):
+            if (call['name'] == 'get_incident_details' and result.get('ok')
+                    and isinstance(result.get('url'), str) and result['url'] and result['url'] not in sources):
                 sources.append(result['url'])
             messages.append({'role': 'tool', 'tool_call_id': call['id'],
                              'content': json.dumps(result, ensure_ascii=False, default=str)})

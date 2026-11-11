@@ -129,5 +129,110 @@ class TraceShowsWhatModelSawTests(unittest.TestCase):
                 self.assertTrue({'step', 'name', 'arguments', 'result'} <= set(event))
 
 
+class StubTools:
+    """Tool giả trả đúng giá trị cấu hình, để thử các kết quả sai hình dạng."""
+    def __init__(self, value):
+        self.value = value
+
+    def execute(self, name, args):
+        return self.value
+
+
+def events(result, name):
+    return [t for t in result['trace'] if t['event'] == name]
+
+
+class MalformedResponseTests(unittest.TestCase):
+    def run_with(self, response):
+        return run_agent('x', FakeProvider([response]), StatusTools())
+
+    def test_response_with_wrong_shape_is_error_not_crash(self):
+        message = {'role': 'assistant', 'content': None}
+        cases = {
+            'none': None,
+            'list': [],
+            'no_message': {'calls': [], 'finish': 'stop'},
+            'message_none': {'message': None, 'calls': [], 'finish': 'stop'},
+            'message_list': {'message': [], 'calls': [], 'finish': 'stop'},
+            'calls_not_list': {'message': message, 'calls': 'x', 'finish': 'tool_calls'},
+            'call_not_dict': {'message': message, 'calls': ['x'], 'finish': 'tool_calls'},
+            'call_no_id': {'message': message, 'calls': [{'name': 'get_status', 'arguments': '{}'}], 'finish': 'tool_calls'},
+            'call_no_name': {'message': message, 'calls': [{'id': 'a', 'arguments': '{}'}], 'finish': 'tool_calls'},
+            'name_is_list': {'message': message, 'calls': [{'id': 'a', 'name': ['x'], 'arguments': '{}'}], 'finish': 'tool_calls'},
+            'id_is_dict': {'message': message, 'calls': [{'id': {}, 'name': 'get_status', 'arguments': '{}'}], 'finish': 'tool_calls'},
+        }
+        for label, response in cases.items():
+            with self.subTest(case=label):
+                result = self.run_with(response)
+                self.assertEqual(result['status'], 'error')
+                self.assertEqual(len(events(result, 'malformed_response')), 1)
+
+    def test_arguments_given_as_object_are_accepted(self):
+        message = {'role': 'assistant', 'content': None}
+        response = {'message': message, 'finish': 'tool_calls', 'usage': 'bad',
+                    'calls': [{'id': 'a', 'name': 'get_status', 'arguments': {'provider': 'github'}}]}
+        fake = FakeProvider([response, final('Xong.')])
+        result = run_agent('x', fake, StatusTools())
+        self.assertEqual(result['status'], 'completed')
+        self.assertTrue(json.loads(fake.histories[1][-1]['content'])['provider'] == 'github')
+        self.assertEqual(result['usage'][0], {})
+
+    def test_arguments_none_or_number_become_invalid_arguments_observation(self):
+        for raw in (None, 5):
+            with self.subTest(arguments=raw):
+                response = tool_call('a', 'get_status', '{}')
+                response['calls'][0]['arguments'] = raw
+                fake = FakeProvider([response, final('Xong.')])
+                result = run_agent('x', fake, StatusTools())
+                self.assertEqual(result['status'], 'completed')
+
+
+class DefensiveToolPathTests(unittest.TestCase):
+    def run_stub(self, value, name='get_status', arguments='{"provider":"github"}'):
+        fake = FakeProvider([tool_call('a', name, arguments), final('Xong.'), final('Xong.')])  # dư 1: cổng lỗi có thể nhắc
+        result = run_agent('x', fake, StubTools(value))
+        self.assertEqual(result['status'], 'completed')
+        observation = json.loads(fake.histories[1][-1]['content'])  # model nhận JSON hợp lệ
+        return result, observation
+
+    def test_fields_with_wrong_types_do_not_crash(self):
+        values = [
+            {'ok': True, 'incidents': 5, 'updates': 7, 'url': 12, 'id': ['x']},
+            {'ok': True, 'incidents': [1, None, 'x'], 'updates': [3, None], 'url': ['u']},
+            {'ok': False, 'error': ['RATE_LIMITED']},
+            {'ok': False, 'error': {'a': 1}},
+            {'provider': ['github'], 'incidents': [{'id': ['z']}]},
+        ]
+        for value in values:
+            with self.subTest(value=value):
+                self.run_stub(value)
+                self.run_stub(value, 'get_incident_details', '{"provider":"github","incident_id":"x"}')
+
+    def test_non_dict_tool_result_becomes_observation(self):
+        for value in (None, [], 'text', 3):
+            with self.subTest(value=value):
+                _, observation = self.run_stub(value)
+                self.assertEqual(observation['error'], 'INVALID_TOOL_RESULT')
+
+    def test_unserializable_tool_result_becomes_observation(self):
+        cyclic = {}
+        cyclic['self'] = cyclic
+        for value in (cyclic, {(1, 2): 'tuple key'}):
+            with self.subTest(value=repr(value)[:30]):
+                result, observation = self.run_stub(value)
+                self.assertEqual(observation['error'], 'UNSERIALIZABLE_RESULT')
+                json.dumps(result['trace'])  # trace cũng phải serialize được
+
+    def test_non_json_values_are_stringified_in_trace(self):
+        result, observation = self.run_stub({'ok': True, 'items': {1, 2}, 'cls': object})
+        json.dumps(result['trace'])
+        self.assertTrue(observation['ok'])
+
+    def test_bad_url_is_not_used_as_source(self):
+        result, _ = self.run_stub({'ok': True, 'url': 123}, 'get_incident_details',
+                                  '{"provider":"github","incident_id":"x"}')
+        self.assertFalse(events(result, 'validation_missing_source'))
+
+
 if __name__ == '__main__':
     unittest.main()
