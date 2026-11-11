@@ -1,7 +1,11 @@
-"""Bài tập chính: hiện chưa có lời giải. Xem GUIDE.md."""
+"""ReAct agent loop tự viết (không dùng framework) cho bài lab status agent."""
 import json
+import time
 
 from status_tools import SCHEMAS
+
+MAX_RATE_LIMIT_ATTEMPTS = 3  # tổng số lần gọi tối đa cho mỗi (tool, provider) bị 429 trong cả run
+MAX_RETRY_WAIT = 5.0         # giây; Retry-After lớn hơn mức này thì dừng thay vì chờ
 
 
 SYSTEM_PROMPT = '''Bạn là trợ lý điều tra trạng thái GitHub và Cloudflare.
@@ -13,6 +17,17 @@ Khi đọc incident: nếu bất kỳ update nào chứa ID hoặc URL incident 
 bạn PHẢI gọi get_incident_details cho incident đó ở lượt kế tiếp, trước khi trả lời.
 Chép ID chính xác từng ký tự từ URL. Nếu tool trả INCIDENT_NOT_FOUND, kiểm tra lại ID đã chép
 đúng chưa và thử lại một lần trước khi kết luận là không có dữ liệu.'''
+
+# Chỉ nối thêm khi bộ tools có system_prompt riêng (bonus); bài chính không bị ảnh hưởng.
+BONUS_RULES = '''Quy tắc bổ sung:
+- Các tool get_*_status chỉ liệt kê incident. Muốn nêu phạm vi, ảnh hưởng, thời điểm hay nguyên nhân của
+  một incident cụ thể, phải gọi get_incident_details cho incident đó trước khi trả lời.
+- Nếu update cần tìm chưa có trong trang đã đọc và next_offset khác null thì đọc tiếp bằng offset=next_offset.
+- Khi tool trả RATE_LIMITED (429) và retries_remaining > 0: gọi lại đúng tool đó với cùng tham số ở lượt kế tiếp,
+  đừng hỏi lại người dùng. Khi retry_exhausted=true: dừng gọi tool đó, nói rõ bạn chưa biết trạng thái
+  dịch vụ đó và không coi 429 là outage.
+- Không có tool cho một nhà cung cấp thì nói thiếu dữ liệu; không bịa trạng thái hay URL.'''
+
 
 def _parse_arguments(raw):
     """JSON string -> (dict, None) hoặc (None, lỗi để trả lại cho model)."""
@@ -35,11 +50,59 @@ def _run_tool(tools, name, raw_arguments):
         return {'ok': False, 'error': type(exc).__name__, 'message': str(exc)[:200]}
 
 
+def _retry_delay(result, attempts):
+    """Số giây chờ trước lần thử lại; None nếu phải dừng (Retry-After quá lâu)."""
+    raw = result.get('retry_after_seconds', result.get('retry_after'))
+    try:
+        delay = float(raw) if raw is not None else float(attempts)
+    except (TypeError, ValueError):  # Retry-After dạng ngày giờ HTTP -> dùng backoff đơn giản
+        delay = float(attempts)
+    return None if delay > MAX_RETRY_WAIT else max(delay, 0.0)
+
+
+def _call_tool(tools, call, step, trace, rate_limited, pending):
+    """Gọi tool một lần; model vẫn thấy mọi lỗi, code chỉ ép ngân sách thử lại khi gặp 429.
+
+    rate_limited đếm số lần 429 theo (tool, provider) trong cả run để model không thể
+    vòng qua giới hạn bằng cách gọi lại ở lượt sau. pending giữ các tool vừa bị 429
+    mà còn lượt thử lại.
+    """
+    args, _ = _parse_arguments(call['arguments'])
+    key = (call['name'], args.get('provider') if args else None)
+    if rate_limited.get(key, 0) >= MAX_RATE_LIMIT_ATTEMPTS:
+        trace.append({'event': 'retry_budget_exhausted', 'step': step, 'name': call['name'],
+                      'arguments': call['arguments']})
+        return {'ok': False, 'error': 'RATE_LIMITED', 'retry_exhausted': True,
+                'message': 'Đã hết số lần thử lại cho tool này; không gọi lại. Báo rõ chưa biết trạng thái.'}
+    result = _run_tool(tools, call['name'], call['arguments'])
+    trace.append({'event': 'tool', 'step': step, 'name': call['name'],
+                  'arguments': call['arguments'], 'result': result})
+    if not (isinstance(result, dict) and result.get('error') == 'RATE_LIMITED'):
+        pending.pop(key, None)
+        return result
+    rate_limited[key] = rate_limited.get(key, 0) + 1
+    delay = _retry_delay(result, rate_limited[key])
+    remaining = MAX_RATE_LIMIT_ATTEMPTS - rate_limited[key] if delay is not None else 0
+    out = {**result, 'attempts': rate_limited[key], 'retries_remaining': remaining}
+    if remaining > 0:
+        pending[key] = call['name']
+        time.sleep(delay)  # tôn trọng Retry-After (đã giới hạn bởi MAX_RETRY_WAIT)
+        out['message'] = f'Bị rate limit (429). Hãy gọi lại đúng tool này; còn {remaining} lần thử.'
+    else:
+        pending.pop(key, None)
+        out['retry_exhausted'] = True
+        out['message'] = ('Bị rate limit và đã ngừng thử lại. Báo rõ chưa biết trạng thái '
+                          'dịch vụ này; không coi 429 là outage.')
+    return out
+
 
 def run_agent(question, provider, tools, max_steps=6):
     """Trả dict: status, answer, trace, usage (và error nếu có)."""
     schemas = getattr(tools, 'schemas', SCHEMAS)
-    system_prompt = getattr(tools, 'system_prompt', SYSTEM_PROMPT)
+    tool_prompt = getattr(tools, 'system_prompt', None)
+    system_prompt = SYSTEM_PROMPT if tool_prompt is None else tool_prompt + '\n' + BONUS_RULES
+    rate_limited = {}  # (tool, provider) -> số lần bị 429
+    pending = {}       # (tool, provider) -> tên tool vừa bị 429 và còn lượt thử lại
     messages = [{'role': 'system', 'content': system_prompt},
                 {'role': 'user', 'content': question}]
     sources = []  # URL của các incident đã đọc thành công
@@ -74,6 +137,13 @@ def run_agent(question, provider, tools, max_steps=6):
 
         if not calls:
             if reason == 'stop':
+                if pending and step < max_steps:  # còn lượt thử lại mà model đã định kết thúc
+                    names = sorted(set(pending.values()))
+                    trace.append({'event': 'validation_pending_retry', 'step': step, 'tools': names})
+                    messages.append({'role': 'user', 'content':
+                        'Tool ' + ', '.join(names) + ' vừa bị rate limit nhưng vẫn còn lượt thử lại. '
+                        'Hãy gọi lại tool đó trước khi trả lời.'})
+                    continue
                 answer = assistant.get('content') or ''
                 if sources and not any(url in answer for url in sources):
                     trace.append({'event': 'validation_missing_source', 'step': step, 'sources': list(sources)})
@@ -90,9 +160,7 @@ def run_agent(question, provider, tools, max_steps=6):
             return finish('error', answer=assistant.get('content') or '', error=message)
 
         for call in calls:  # xử lý MỌI call trước khi gọi model tiếp
-            result = _run_tool(tools, call['name'], call['arguments'])
-            trace.append({'event': 'tool', 'step': step, 'name': call['name'],
-                          'arguments': call['arguments'], 'result': result})
+            result = _call_tool(tools, call, step, trace, rate_limited, pending)
             if (call['name'] == 'get_incident_details' and isinstance(result, dict)
                     and result.get('ok') and result.get('url') and result['url'] not in sources):
                 sources.append(result['url'])
