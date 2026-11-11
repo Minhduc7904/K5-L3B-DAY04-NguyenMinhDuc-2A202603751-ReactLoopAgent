@@ -325,5 +325,65 @@ class RetryDelayTests(unittest.TestCase):
                 self.assertEqual(result['status'], 'completed')
 
 
+class DisclosureGateTests(unittest.TestCase):
+    """Chỉ áp dụng cho bộ bonus (tools có system_prompt)."""
+    DATE = BonusTools('snapshot').status('vercel')['captured_at'][:10]  # YYYY-MM-DD
+
+    def run_bonus(self, answers, scenario='normal', calls=1, max_steps=8):
+        script = [tool_call(str(i), 'get_vercel_status', '{}') for i in range(calls)] + [final(a) for a in answers]
+        fake = FakeProvider(script)
+        with mock.patch('agent.time.sleep'):
+            result = run_agent('x', fake, BonusTools('snapshot', scenario), max_steps=max_steps)
+        return result, fake
+
+    def test_missing_date_is_nudged_once(self):
+        result, fake = self.run_bonus(['Vercel ổn.', f'Vercel ổn (dữ liệu lúc {self.DATE}).'])
+        evs = events(result, 'validation_missing_disclosure')
+        self.assertEqual(len(evs), 1)
+        self.assertTrue(evs[0]['missing'][0].startswith('vercel:'))
+        self.assertEqual(result['status'], 'completed')
+        self.assertIn(self.DATE, result['answer'])
+        self.assertEqual(fake.histories[-1][-1]['role'], 'user')
+
+    def test_answer_with_date_is_not_nudged(self):
+        for text in (f'Lúc {self.DATE} ổn.', 'Lúc {2}/{1}/{0} ổn.'.format(*self.DATE.split('-'))):
+            with self.subTest(text=text):
+                result, _ = self.run_bonus([text])
+                self.assertFalse(events(result, 'validation_missing_disclosure'))
+
+    def test_429_must_be_mentioned_when_it_happened(self):
+        result, _ = self.run_bonus([f'{self.DATE}: Vercel ổn.', f'{self.DATE}: gặp 429, thử lại thì ổn.'],
+                                   scenario='rate_limit_once', calls=2)
+        evs = events(result, 'validation_missing_disclosure')
+        self.assertEqual([e['missing'] for e in evs], [['rate_limit']])
+        self.assertIn('429', result['answer'])
+
+    def test_no_429_requirement_without_rate_limit(self):
+        result, _ = self.run_bonus([f'{self.DATE}: ổn.'])
+        self.assertFalse(events(result, 'validation_missing_disclosure'))
+
+    def test_nudge_is_not_repeated(self):
+        result, _ = self.run_bonus(['Ổn.', 'Vẫn ổn.', 'Lần ba.'])
+        self.assertEqual(len(events(result, 'validation_missing_disclosure')), 1)
+        self.assertEqual(result['answer'], 'Vẫn ổn.')
+
+    def test_no_nudge_on_last_step(self):
+        result, _ = self.run_bonus(['Ổn.'], max_steps=2)
+        self.assertFalse(events(result, 'validation_missing_disclosure'))
+        self.assertEqual(result['status'], 'completed')
+
+    def test_provider_failure_after_nudge_keeps_the_answer(self):
+        result, _ = self.run_bonus(['Ổn.'])  # hết kịch bản đúng lúc model được nhắc
+        self.assertEqual(result['status'], 'completed')
+        self.assertEqual(result['answer'], 'Ổn.')
+        self.assertEqual(len(events(result, 'disclosure_fallback')), 1)
+
+    def test_main_task_tools_are_not_affected(self):
+        fake = FakeProvider([tool_call('a', 'get_status', '{"provider":"github"}'), final('Ổn.')])
+        result = run_agent('x', fake, StatusTools())
+        self.assertFalse(events(result, 'validation_missing_disclosure'))
+        self.assertEqual(result['answer'], 'Ổn.')
+
+
 if __name__ == '__main__':
     unittest.main()

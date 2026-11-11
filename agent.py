@@ -38,7 +38,9 @@ BONUS_RULES = '''Quy tắc bổ sung:
 - Khi tool trả RATE_LIMITED (429) và retries_remaining > 0: gọi lại đúng tool đó với cùng tham số ở lượt kế tiếp,
   đừng hỏi lại người dùng. Khi retry_exhausted=true: dừng gọi tool đó, nói rõ bạn chưa biết trạng thái
   dịch vụ đó và không coi 429 là outage.
-- Không có tool cho một nhà cung cấp thì nói thiếu dữ liệu; không bịa trạng thái hay URL.'''
+- Không có tool cho một nhà cung cấp thì nói thiếu dữ liệu; không bịa trạng thái hay URL.
+- Câu trả lời cuối phải nêu thời điểm captured_at (ngày giờ) của dữ liệu từng nhà cung cấp đã đọc, và nếu từng
+  gặp 429 thì nói rõ đã gặp, đã thử lại mấy lần và kết quả.'''
 
 
 def _parse_arguments(raw):
@@ -82,6 +84,8 @@ def _retry_delay(result, attempts):
 
 
 _ID_IN_TEXT = re.compile(r'incidents/([a-z0-9]+)')
+_ISO_DATE = re.compile(r'^(\d{4})-(\d{2})-(\d{2})')
+_RATE_LIMIT_WORDS = ('429', 'rate limit', 'rate-limit', 'ratelimit', 'giới hạn tần suất', 'thử lại')
 
 
 def _as_list(value):
@@ -160,6 +164,27 @@ def _is_invented_id(args, question, observed):
     return wanted not in question and not any(wanted in ids for ids in observed.values())
 
 
+def _mentions_date(answer, captured_at):
+    """Câu trả lời có nêu ngày của captured_at (dạng YYYY-MM-DD hoặc DD/MM/YYYY)."""
+    found = _ISO_DATE.match(captured_at)
+    if not found:
+        return True  # không đọc được ngày thì không đòi hỏi
+    year, month, day = found.groups()
+    forms = {f'{year}-{month}-{day}', f'{day}/{month}/{year}', f'{int(day)}/{int(month)}/{year}',
+             f'{day}-{month}-{year}', f'{int(day)}-{int(month)}-{year}'}
+    return any(form in answer for form in forms)
+
+
+def _missing_disclosure(answer, captured, had_rate_limit):
+    """Những điều bộ bonus đòi hỏi mà câu trả lời còn thiếu (danh sách rỗng nếu đủ)."""
+    missing = [f'{provider}: {stamp}' for provider, stamp in sorted(captured.items())
+               if not _mentions_date(answer, stamp)]
+    lowered = answer.lower()
+    if had_rate_limit and not any(word in lowered for word in _RATE_LIMIT_WORDS):
+        missing.append('rate_limit')
+    return missing
+
+
 def _traced(trace, step, call, observation):
     """Ghi trace đúng thứ model sẽ thấy (đã có attempts, retries_remaining, did_you_mean...)."""
     trace.append({'event': 'tool', 'step': step, 'name': call['name'],
@@ -233,12 +258,19 @@ def run_agent(question, provider, tools, max_steps=6):
     failed = {}        # provider -> lỗi gần nhất khi tool của provider đó chưa được gọi lại thành công
     failure_reminded = False
     empty_reminded = False
+    is_bonus = tool_prompt is not None
+    captured = {}      # provider -> captured_at của dữ liệu đã đọc (chỉ dùng cho cổng công bố của bonus)
+    disclosure_reminded = False
+    held = []          # câu trả lời đã dùng được, giữ lại khi chỉ nhắc bổ sung phần công bố (không bắt buộc)
     messages = [{'role': 'system', 'content': system_prompt},
                 {'role': 'user', 'content': question}]
     sources = []  # URL của các incident đã đọc thành công
     trace, usage = [], []
 
     def finish(status, answer='', error=None):
+        if status == 'error' and held:  # lời nhắc công bố chỉ là bổ sung: lỗi sau đó không được làm mất câu trả lời
+            trace.append({'event': 'disclosure_fallback', 'error': error})
+            status, answer, error = 'completed', held[0], None
         out = {'status': status, 'answer': answer, 'trace': trace, 'usage': usage}
         if error:
             out['error'] = error
@@ -307,16 +339,32 @@ def run_agent(question, provider, tools, max_steps=6):
                         'Câu trả lời chưa có URL nguồn của incident bạn đã đọc. Hãy trả lời lại và '
                         'ghi ít nhất một URL sau: ' + ', '.join(sources)})
                     continue
+                if is_bonus and not disclosure_reminded and step < max_steps:  # nhắc đúng một lần
+                    missing = _missing_disclosure(answer, captured, bool(rate_limited))
+                    if missing:
+                        disclosure_reminded = True
+                        held[:] = [answer]
+                        trace.append({'event': 'validation_missing_disclosure', 'step': step, 'missing': missing})
+                        messages.append({'role': 'user', 'content':
+                            'Hãy viết lại câu trả lời cuối và bổ sung: ' + '; '.join(
+                                'thời điểm captured_at (' + item + ')' if item != 'rate_limit'
+                                else 'việc đã gặp lỗi 429 (rate limit), đã thử lại thế nào và kết quả'
+                                for item in missing) + '. Giữ nguyên các URL nguồn.'})
+                        continue
                 return finish('completed', answer=answer)
             message = f'Model dừng với lý do không hỗ trợ: {reason!r}.'
             trace.append({'event': 'unexpected_finish', 'step': step, 'finish': reason})
             return finish('error', answer=_text(assistant), error=message)
 
+        held.clear()  # model tiếp tục gọi tool: câu trả lời cũ không còn là phương án dự phòng
         for call in calls:  # xử lý MỌI call trước khi gọi model tiếp
             result = _call_tool(tools, call, step, trace, rate_limited, pending, observed, failed, question)
             if (call['name'] == 'get_incident_details' and result.get('ok')
                     and isinstance(result.get('url'), str) and result['url'] and result['url'] not in sources):
                 sources.append(result['url'])
+            if (result.get('ok') is not False and isinstance(result.get('provider'), str)
+                    and isinstance(result.get('captured_at'), str)):
+                captured[result['provider']] = result['captured_at']
             messages.append({'role': 'tool', 'tool_call_id': call['id'],
                              'content': json.dumps(result, ensure_ascii=False, default=str)})
 
