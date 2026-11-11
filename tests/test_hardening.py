@@ -325,6 +325,55 @@ class RetryDelayTests(unittest.TestCase):
                 self.assertEqual(result['status'], 'completed')
 
 
+class UnfollowedLinkGateTests(unittest.TestCase):
+    URLS = 'https://stspg.io/7pwv28hvkmz8 https://stspg.io/pjgptg3cfc6n'
+    OPEN_FIRST = tool_call('a', 'get_incident_details', '{"provider":"github","incident_id":"h02n9572mx9y"}')
+
+    def test_nudges_once_then_model_follows_link(self):
+        fake = FakeProvider([
+            self.OPEN_FIRST, final(f'Xong sớm {self.URLS}'),
+            tool_call('b', 'get_incident_details', '{"provider":"github","incident_id":"xr3myzj7ms51"}'),
+            final(f'Đã theo liên kết {self.URLS}')])
+        result = run_agent('x', fake, StatusTools(), max_steps=6)
+        evs = events(result, 'validation_unfollowed_link')
+        self.assertEqual(len(evs), 1)
+        self.assertEqual(evs[0]['links'], ['github:xr3myzj7ms51'])
+        self.assertIn('xr3myzj7ms51', fake.histories[2][-1]['content'])
+        self.assertEqual(result['answer'], f'Đã theo liên kết {self.URLS}')
+
+    def test_no_nudge_when_link_already_read(self):
+        fake = FakeProvider([
+            self.OPEN_FIRST,
+            tool_call('b', 'get_incident_details', '{"provider":"github","incident_id":"xr3myzj7ms51"}'),
+            final(f'Xong {self.URLS}')])
+        result = run_agent('x', fake, StatusTools(), max_steps=6)
+        self.assertFalse(events(result, 'validation_unfollowed_link'))
+
+    def test_nudge_is_not_repeated(self):
+        fake = FakeProvider([self.OPEN_FIRST, final(f'Một {self.URLS}'), final(f'Hai {self.URLS}')])
+        result = run_agent('x', fake, StatusTools(), max_steps=6)
+        self.assertEqual(len(events(result, 'validation_unfollowed_link')), 1)
+        self.assertEqual(result['answer'], f'Hai {self.URLS}')
+
+    def test_provider_failure_after_nudge_keeps_the_answer(self):
+        result = run_agent('x', FakeProvider([self.OPEN_FIRST, final(f'Một {self.URLS}')]), StatusTools(), max_steps=6)
+        self.assertEqual(result['status'], 'completed')
+        self.assertEqual(result['answer'], f'Một {self.URLS}')
+        self.assertEqual(len(events(result, 'disclosure_fallback')), 1)
+
+    def test_no_nudge_on_last_step(self):
+        result = run_agent('x', FakeProvider([self.OPEN_FIRST, final(f'Một {self.URLS}')]), StatusTools(), max_steps=2)
+        self.assertFalse(events(result, 'validation_unfollowed_link'))
+
+    def test_incident_without_links_is_unaffected(self):
+        fake = FakeProvider([
+            tool_call('a', 'get_incident_details', '{"provider":"cloudflare","incident_id":"x9orajjmvvwa"}'),
+            final('Xong https://www.cloudflarestatus.com/incidents/x9orajjmvvwa')])
+        result = run_agent('x', fake, StatusTools(), max_steps=4)
+        self.assertFalse(events(result, 'validation_unfollowed_link'))
+        self.assertEqual(result['status'], 'completed')
+
+
 class DisclosureGateTests(unittest.TestCase):
     """Chỉ áp dụng cho bộ bonus (tools có system_prompt)."""
     DATE = BonusTools('snapshot').status('vercel')['captured_at'][:10]  # YYYY-MM-DD

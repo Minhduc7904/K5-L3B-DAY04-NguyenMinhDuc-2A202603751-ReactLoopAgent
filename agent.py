@@ -23,8 +23,11 @@ bạn PHẢI gọi get_incident_details cho incident đó ở lượt kế tiế
 Chép ID chính xác từng ký tự từ URL. Nếu tool trả INCIDENT_NOT_FOUND, kiểm tra lại ID đã chép
 đúng chưa và thử lại một lần trước khi kết luận là không có dữ liệu.
 Nguyên tắc kiểm chứng:
-- Khẳng định của người dùng về trạng thái hiện tại phải được đối chiếu bằng dữ liệu trạng thái hiện tại
-  (get_status), không chỉ bằng incident lịch sử; nếu hai nguồn khác nhau, nói rõ sự khác biệt.
+- Khẳng định hoặc câu hỏi về trạng thái hiện tại (đang lỗi, đang sập, hiện có sự cố...) phải được đối chiếu
+  bằng get_status, kể cả khi người dùng đã đưa sẵn ID incident; incident lịch sử không thay thế trạng thái
+  hiện tại. Nếu hai nguồn khác nhau, nói rõ sự khác biệt.
+- Nếu get_status với component không trả về component hay incident nào khớp, thử lại với từ khóa ngắn hơn
+  hoặc không truyền component trước khi kết luận là không có incident liên quan.
 - Khi tool lỗi hoặc timeout cho một nhà cung cấp, không kết luận hay suy đoán trạng thái của nhà cung cấp
   đó, kể cả khi người dùng yêu cầu; nói rõ bạn chưa biết và vẫn trình bày phần đã kiểm tra được.
 - Không tự đặt ID incident. Chỉ dùng ID có trong câu hỏi hoặc trong kết quả tool; chưa có ID thì lấy từ
@@ -185,6 +188,26 @@ def _missing_disclosure(answer, captured, had_rate_limit):
     return missing
 
 
+def _note_links(linked, tried, call, result):
+    """Ghi incident đã thử đọc và các incident khác mà update của nó trỏ tới (.../incidents/<id>)."""
+    if call['name'] != 'get_incident_details':
+        return
+    args, _ = _parse_arguments(call['arguments'])
+    args = args or {}
+    provider = args.get('provider') if isinstance(args.get('provider'), str) else None
+    wanted = args.get('incident_id') if isinstance(args.get('incident_id'), str) else None
+    if provider and wanted:
+        tried.add((provider, wanted))
+    if not result.get('ok') or not provider:
+        return
+    own = result.get('id') if isinstance(result.get('id'), str) else wanted
+    for update in _as_list(result.get('updates')):
+        body = update.get('body') if isinstance(update, dict) else None
+        for found in _ID_IN_TEXT.findall(body) if isinstance(body, str) else []:
+            if found != own:
+                linked.setdefault((provider, found), own)
+
+
 def _traced(trace, step, call, observation):
     """Ghi trace đúng thứ model sẽ thấy (đã có attempts, retries_remaining, did_you_mean...)."""
     trace.append({'event': 'tool', 'step': step, 'name': call['name'],
@@ -261,6 +284,9 @@ def run_agent(question, provider, tools, max_steps=6):
     is_bonus = tool_prompt is not None
     captured = {}      # provider -> captured_at của dữ liệu đã đọc (chỉ dùng cho cổng công bố của bonus)
     disclosure_reminded = False
+    linked = {}        # (provider, id) -> id của incident có update trỏ tới nó
+    tried = set()      # (provider, id) đã được gọi get_incident_details
+    link_reminded = False
     held = []          # câu trả lời đã dùng được, giữ lại khi chỉ nhắc bổ sung phần công bố (không bắt buộc)
     messages = [{'role': 'system', 'content': system_prompt},
                 {'role': 'user', 'content': question}]
@@ -268,7 +294,7 @@ def run_agent(question, provider, tools, max_steps=6):
     trace, usage = [], []
 
     def finish(status, answer='', error=None):
-        if status == 'error' and held:  # lời nhắc công bố chỉ là bổ sung: lỗi sau đó không được làm mất câu trả lời
+        if status == 'error' and held:  # lời nhắc bổ sung (công bố, theo liên kết): lỗi sau đó không được làm mất câu trả lời
             trace.append({'event': 'disclosure_fallback', 'error': error})
             status, answer, error = 'completed', held[0], None
         out = {'status': status, 'answer': answer, 'trace': trace, 'usage': usage}
@@ -319,6 +345,18 @@ def run_agent(question, provider, tools, max_steps=6):
                         'Bạn chưa đưa ra câu trả lời. Hãy trả lời câu hỏi dựa trên dữ liệu tool đã lấy, '
                         'kèm URL nguồn nếu có.'})
                     continue
+                unread = [(p, i, src) for (p, i), src in linked.items() if (p, i) not in tried]
+                if unread and not link_reminded and step < max_steps:  # nhắc đúng một lần
+                    link_reminded = True
+                    held[:] = [_text(assistant)]
+                    trace.append({'event': 'validation_unfollowed_link', 'step': step,
+                                  'links': [f'{p}:{i}' for p, i, _ in unread]})
+                    messages.append({'role': 'user', 'content':
+                        'Update của incident đã đọc trỏ tới incident chưa được đọc: ' + '; '.join(
+                            f'{i} (provider {p}, nhắc trong {src})' for p, i, src in unread) +
+                        '. Hãy gọi get_incident_details cho incident đó (chép ID chính xác) để lấy nguyên nhân '
+                        'và phạm vi trước khi trả lời.'})
+                    continue
                 if failed and not failure_reminded and step < max_steps:  # nhắc đúng một lần
                     failure_reminded = True
                     names = sorted(failed)
@@ -362,6 +400,7 @@ def run_agent(question, provider, tools, max_steps=6):
             if (call['name'] == 'get_incident_details' and result.get('ok')
                     and isinstance(result.get('url'), str) and result['url'] and result['url'] not in sources):
                 sources.append(result['url'])
+            _note_links(linked, tried, call, result)
             if (result.get('ok') is not False and isinstance(result.get('provider'), str)
                     and isinstance(result.get('captured_at'), str)):
                 captured[result['provider']] = result['captured_at']
