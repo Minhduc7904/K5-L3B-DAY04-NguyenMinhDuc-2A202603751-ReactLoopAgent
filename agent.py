@@ -68,7 +68,9 @@ def _call_tool(tools, call, step, trace, rate_limited, pending):
     mà còn lượt thử lại.
     """
     args, _ = _parse_arguments(call['arguments'])
-    key = (call['name'], args.get('provider') if args else None)
+    provider_arg = args.get('provider') if args else None
+    # Chỉ chuỗi mới hashable an toàn; list/dict từ model không được làm crash run.
+    key = (call['name'], provider_arg if isinstance(provider_arg, str) else None)
     if rate_limited.get(key, 0) >= MAX_RATE_LIMIT_ATTEMPTS:
         trace.append({'event': 'retry_budget_exhausted', 'step': step, 'name': call['name'],
                       'arguments': call['arguments']})
